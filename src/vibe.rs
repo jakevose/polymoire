@@ -42,6 +42,11 @@ impl Mood {
     }
 }
 
+/// Highest [`Vibe::level`]: a peak may run a little above the recent loud average.
+pub const MAX_LEVEL: f32 = 1.25;
+/// How fast [`Vibe::level`] follows the music, per second (about 0.7 s to settle).
+const LEVEL_RATE: f32 = 1.5;
+
 /// Instantaneous features, smoothed by [`Vibe`].
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct Features {
@@ -57,6 +62,9 @@ pub struct Features {
 #[derive(Clone, Debug)]
 pub struct Vibe {
     loud_peak: f32,
+    /// How loud it is right now against the loudest the track has been lately: about 0..1,
+    /// up to [`MAX_LEVEL`] on peaks, smoothed over about 0.7 s. 0 in silence.
+    pub level: f32,
     pub intensity: f32,
     pub heaviness: f32,
     pub density: f32,
@@ -73,6 +81,7 @@ impl Default for Vibe {
     fn default() -> Self {
         Vibe {
             loud_peak: 0.02,
+            level: 0.0,
             intensity: 0.0,
             heaviness: 0.0,
             density: 0.0,
@@ -107,13 +116,17 @@ pub fn classify(intensity: f32, heaviness: f32, density: f32, brightness: f32) -
 impl Vibe {
     /// Extracts features from the analyzer's outputs.
     pub fn features(&mut self, dt: f32, l: &Levels, r: &Rhythm, live: bool) -> Features {
+        let k = smooth_k(LEVEL_RATE, dt);
         if !live || !l.present {
+            self.level -= self.level * k;
             return Features::default();
         }
         self.loud_peak = l
             .level_slow
             .max(self.loud_peak * (-dt / 60.0).exp())
             .max(0.02);
+        let level = (l.level_fast / self.loud_peak).clamp(0.0, MAX_LEVEL);
+        self.level += (level - self.level) * k;
         Features {
             loudness: (l.level_slow / self.loud_peak).clamp(0.0, 1.0),
             density: (r.density / 14.0).clamp(0.0, 1.0),
@@ -341,5 +354,45 @@ mod tests {
         assert_eq!(f, Features::default());
         feed(&mut v, 6.0, f, Rhythm::default());
         assert_eq!(v.mood, Mood::Ambient);
+    }
+
+    #[test]
+    fn level_follows_loudness_against_the_recent_peak() {
+        let mut v = Vibe::default();
+        let r = Rhythm::default();
+        let at = |rms: f32| Levels {
+            level_fast: rms,
+            level_slow: rms,
+            present: true,
+            ..Default::default()
+        };
+        let run = |v: &mut Vibe, l: &Levels, secs: f32| {
+            for _ in 0..(secs * 60.0) as usize {
+                v.features(1.0 / 60.0, l, &r, true);
+            }
+        };
+        run(&mut v, &at(0.2), 6.0);
+        assert!(v.level > 0.95, "loud section: {}", v.level);
+        // A quiet verse at a quarter of the volume reads well below the chorus.
+        run(&mut v, &at(0.05), 4.0);
+        assert!((0.2..0.35).contains(&v.level), "quiet verse: {}", v.level);
+        // It eases rather than snaps: half a second into the return it is still rising.
+        run(&mut v, &at(0.2), 0.5);
+        assert!(v.level < 0.9, "should ease back up: {}", v.level);
+        run(&mut v, &at(0.2), 4.0);
+        assert!(v.level > 0.95);
+        // Silence fades it out.
+        v.features(1.0 / 60.0, &Levels::default(), &r, true);
+        run(&mut v, &Levels::default(), 5.0);
+        assert!(v.level < 0.01, "silence: {}", v.level);
+        // Peaks above the recent level are allowed, but bounded.
+        let mut p = Vibe::default();
+        run(&mut p, &at(0.2), 6.0);
+        let spike = Levels {
+            level_fast: 2.0,
+            ..at(0.2)
+        };
+        run(&mut p, &spike, 3.0);
+        assert!(p.level <= MAX_LEVEL + 1e-4);
     }
 }

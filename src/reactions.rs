@@ -26,6 +26,18 @@ pub const MAX_ZOOM: f32 = 0.08;
 /// Widest half-time sway, in radians (about 4°), alternating left and right.
 pub const MAX_SWAY: f32 = 0.07;
 
+/// Effect gain at silence-adjacent levels and at the loudest peaks. See [`loudness_gain`].
+pub const MIN_GAIN: f32 = 0.3;
+pub const MAX_GAIN: f32 = 1.25;
+
+/// Turns the track-relative sound level (0 = silent, 1 = as loud as it has been lately,
+/// a little more on peaks) into a multiplier for every music-driven effect. Quiet passages
+/// react gently, a steady loud section (level ~1) is about 1.1x, spikes push up to 1.25x.
+/// The comfort caps still apply after this.
+pub fn loudness_gain(level: f32) -> f32 {
+    (MIN_GAIN + 0.8 * level.max(0.0).powf(1.3)).clamp(MIN_GAIN, MAX_GAIN)
+}
+
 /// Per-frame visual modifiers handed to the renderer.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Visual {
@@ -149,6 +161,8 @@ pub struct Sound {
     pub syncopation: f32,
     /// Snare hits per second.
     pub snare_rate: f32,
+    /// Current sound level against the track's recent loudest (see `Vibe::level`).
+    pub level: f32,
 }
 
 /// Everything a frame needs to compute the visual.
@@ -233,7 +247,9 @@ impl Pulse {
         self.cam += (self.cam_raw - self.cam) * smooth_k(12.0, dt);
         // Two smoothing stages give an ease-in-out rock rather than a jolt. Heavy music
         // pushes and pulls more than it rocks.
-        let sway_amp = MAX_SWAY * (0.5 + 0.5 * s.intensity) * (1.0 - 0.5 * s.heaviness);
+        let amp = loudness_gain(s.level);
+        let sway_amp =
+            (MAX_SWAY * (0.5 + 0.5 * s.intensity) * (1.0 - 0.5 * s.heaviness) * amp).min(MAX_SWAY);
         let k = smooth_k(4.0 / period, dt);
         self.sway_mid += (self.sway_sign * sway_amp - self.sway_mid) * k;
         self.sway += (self.sway_mid - self.sway) * k;
@@ -270,11 +286,12 @@ impl Pulse {
             }
         }
         let morph_m = crate::traits::ease((self.morph_age / MORPH_EASE).min(1.0));
-        let morph_amp = calm * ((e - 0.3).max(0.0) * 0.12 + music_morph * 0.22);
+        let morph_amp = calm * ((e - 0.3).max(0.0) * 0.12 + music_morph * 0.22 * amp);
 
-        // Intensity scales how hard the music pushes; bass sustain adds weight.
-        let react = 0.55 + 0.6 * s.intensity;
-        let bass = s.bass_sustain * g;
+        // Intensity scales how hard the music pushes and the current level multiplies it;
+        // bass sustain adds weight.
+        let react = (0.55 + 0.6 * s.intensity) * amp;
+        let bass = s.bass_sustain * g * amp;
         let heav = s.heaviness;
 
         // Local wobble and motes: always some with Energy, more with the music.
@@ -283,27 +300,30 @@ impl Pulse {
                 + react * (w_je * (kk * 0.22 + mid * 0.08) + w_pu * kk * 0.08)
                 + bass * 0.18 * (0.5 + heav));
         self.jelly_t += (dt * (0.25 + e * 0.5 + g * (mid * 0.5 + w_je * kk * 0.8)) * calm) as f64;
-        let motes = ((e - 0.3).max(0.0) * 0.55 + w_mt * g * 0.25 + g * s.poly * 0.15).min(0.6);
-        self.mote_t += (dt * (0.5 + e * 0.7 + w_mt * high * 1.0) * calm) as f64;
-        let mote_size = 2.5 + e * 1.5 + w_mt * high * 2.0 + self.hat_env * g * 2.5 * (0.5 + s.poly);
+        let motes =
+            ((e - 0.3).max(0.0) * 0.55 + (w_mt * g * 0.25 + g * s.poly * 0.15) * amp).min(0.6);
+        self.mote_t += (dt * (0.5 + e * 0.7 + w_mt * high * amp) * calm) as f64;
+        let mote_size =
+            2.5 + e * 1.5 + (w_mt * high * 2.0 + self.hat_env * g * 2.5 * (0.5 + s.poly)) * amp;
 
         // Brightness: small target, slew-limited so it can never flash.
-        let expo_target =
-            (1.0 + w_pu * kk * 0.07 + w_gl * self.glow * g * 0.08 + w_br * low * 0.04)
-                .min(MAX_EXPO);
+        let expo_target = (1.0
+            + (w_pu * kk * 0.07 + w_gl * self.glow * g * 0.08 + w_br * low * 0.04) * amp)
+            .min(MAX_EXPO);
         let max_step = EXPO_SLEW * dt;
         self.expo += (expo_target - self.expo).clamp(-max_step, max_step);
 
-        let depth = (ZOOM_BASE * (0.6 + 0.4 * s.intensity) * (1.0 + 0.6 * heav)).min(MAX_ZOOM);
+        let depth =
+            (ZOOM_BASE * (0.6 + 0.4 * s.intensity) * (1.0 + 0.6 * heav) * amp).min(MAX_ZOOM);
         Visual {
             zoom: 1.0 - cam * w_zo.min(1.0) * self.cam * depth,
             ang_off: cam * w_sp.min(1.0) * self.sway,
-            warp_add: calm * (w_br * mid * 0.1 + bass * 0.25 * heav),
-            chroma_add: w_sh * high * 0.3 + g * self.snare_env * 0.2,
+            warp_add: calm * (w_br * mid * 0.1 * amp + bass * 0.25 * heav),
+            chroma_add: (w_sh * high * 0.3 + g * self.snare_env * 0.2) * amp,
             expo: self.expo,
-            hue: g * self.hue + w_hu * kk * 0.03 + w_sh * high * 0.015,
-            spark: w_sh * high * 0.06 + g * self.hat_env * 0.03,
-            vig: 0.6 - (w_br + 0.2) * low * 0.2 - bass * 0.12 * heav,
+            hue: g * self.hue + (w_hu * kk * 0.03 + w_sh * high * 0.015) * amp,
+            spark: (w_sh * high * 0.06 + g * self.hat_env * 0.03) * amp,
+            vig: 0.6 - (w_br + 0.2) * low * 0.2 * amp - bass * 0.12 * heav,
             jelly,
             jelly_t: (self.jelly_t % 10_000.0) as f32,
             morph_a: self.morph_seed - 1.0,
@@ -365,6 +385,7 @@ mod tests {
         poly: 0.0,
         syncopation: 0.2,
         snare_rate: 0.0,
+        level: 1.0,
     };
 
     /// Runs `secs` of music where `hit(i)` gives the hits on frame `i`; returns visuals.
@@ -635,6 +656,52 @@ mod tests {
     }
 
     #[test]
+    fn loudness_gain_is_a_bounded_rising_curve() {
+        assert!((loudness_gain(0.0) - MIN_GAIN).abs() < 1e-6);
+        assert!((loudness_gain(1.0) - 1.1).abs() < 0.01);
+        assert!((loudness_gain(0.25) - 0.43).abs() < 0.01);
+        assert!((loudness_gain(crate::vibe::MAX_LEVEL) - MAX_GAIN).abs() < 1e-6);
+        let mut last = 0.0;
+        for i in 0..=125 {
+            let g = loudness_gain(i as f32 / 100.0);
+            assert!(g >= last);
+            last = g;
+        }
+    }
+
+    #[test]
+    fn quiet_passages_react_less_than_loud_ones() {
+        let quiet = Sound {
+            level: 0.25,
+            ..MUSIC
+        };
+        let loud = Sound {
+            level: 1.0,
+            ..MUSIC
+        };
+        let beat = |i: usize| Hits {
+            kick: if i.is_multiple_of(30) { 1.0 } else { 0.0 },
+            snare: if i % 60 == 30 { 1.0 } else { 0.0 },
+            hat: if i % 15 == 7 { 1.0 } else { 0.0 },
+        };
+        let a = run_with(&mut Pulse::default(), 4.0, quiet, beat);
+        let b = run_with(&mut Pulse::default(), 4.0, loud, beat);
+        // Brightness is left out: it is capped at MAX_EXPO either way.
+        type Probe = (&'static str, fn(&Visual) -> f32);
+        let fields: [Probe; 5] = [
+            ("jelly", |v| v.jelly),
+            ("warp", |v| v.warp_add),
+            ("chroma", |v| v.chroma_add),
+            ("spark", |v| v.spark),
+            ("zoom", |v| 1.0 - v.zoom),
+        ];
+        for (name, f) in fields {
+            let (qa, lb) = (peak(&a, f), peak(&b, f));
+            assert!(lb > qa * 1.8, "{name}: quiet {qa} vs loud {lb}");
+        }
+    }
+
+    #[test]
     fn intensity_scales_the_push() {
         let soft = Sound {
             intensity: 0.1,
@@ -683,6 +750,7 @@ mod tests {
             poly: 1.0,
             syncopation: 1.0,
             snare_rate: 4.0,
+            level: crate::vibe::MAX_LEVEL,
         };
         let vs = run_with(&mut Pulse::default(), 8.0, wild, all);
         let mut prev = 1.0;

@@ -16,13 +16,17 @@ chroma, mosaic) and moves to whatever your computer is playing.
 - Keys: `Space` pause · `N` shift now · `H` hide controls · `F` fullscreen · `D` demo beat.
   Double-click the picture for fullscreen; click it to bring hidden controls back.
 - **Reduce motion** slows everything and damps the beat reactions.
+- **Loudness sets the strength.** How loud the music is right now, compared with the
+  loudest it has been in the last minute, scales every beat reaction: quiet intros and
+  breakdowns move gently (down to 0.3x), steady loud sections run at about 1.1x and
+  sudden swells and drops hit hardest (up to 1.25x).
 
 ### Comfort: kinetic without motion sickness or flashing
 
 Most movement is local: the image wobbles in many directions at once ("jelly"), shapes
 re-form in eased steps on the beat ("re-form"), and motes orbit inside their own small
 cells. Whole-view zooms and spins happen only at **half the tempo** (every other beat):
-the view eases in by at most 6% and rocks at most 4° to alternating sides, never
+the view eases in by at most 8% and rocks at most 4° to alternating sides, never
 spinning on. **Reduce motion** turns the camera moves off. Brightness may rise at most
 10% and changes no faster than 60% per second, so nothing flashes. Tests in
 `src/reactions.rs` enforce all of this.

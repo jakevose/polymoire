@@ -165,6 +165,11 @@ impl PolymoireApp {
                 "intensity: {:.2}, heaviness: {:.2}, bass_sustain: {:.2}",
                 self.vibe.intensity, self.vibe.heaviness, levels.bass_sustain
             );
+            println!(
+                "level: {:.2}, effect gain: {:.2}x",
+                self.vibe.level,
+                polymoire::reactions::loudness_gain(self.vibe.level)
+            );
             let r = self.last_audio.rhythm;
             println!(
                 "rhythm: density {:.1}/s, syncopation {:.2}, triplet {:.2}, dotted {:.2}, poly {:.2}",
@@ -251,6 +256,7 @@ impl PolymoireApp {
             poly: self.vibe.poly,
             syncopation: self.vibe.syncopation,
             snare_rate: a.rhythm.snare_rate,
+            level: self.vibe.level,
         };
         self.visual = self.pulse.frame(FrameInput {
             // Pausing freezes the picture, including its local motion.
