@@ -34,4 +34,10 @@ jobs:
       - uses: Swatinem/rust-cache@v2
 
       - name: Lint and test
-        run: mise run ci
+        run: mise run lint && mise run test
+
+      # Fails if a dependency was added without a risk entry in site/dependencies.toml,
+      # a screenshot is missing, or the page template has unfilled placeholders.
+      - name: Check website
+        if: runner.os == 'Linux'
+        run: mise run site-check

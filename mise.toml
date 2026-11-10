@@ -49,9 +49,24 @@ run = [
   "cargo clippy --all-targets --locked -- -D warnings",
 ]
 
+[tasks.site]
+description = "Build the website into target/site (with live release data if gh is set up)"
+run = "python3 scripts/build-site.py --fetch-release"
+
+[tasks.site-check]
+description = "Check the website builds and its data is complete (deps have risk entries, screenshots exist)"
+run = "python3 scripts/build-site.py --check"
+
+[tasks.screenshots]
+description = "Render the website screenshots from the demo loop (needs a GPU and Pillow)"
+run = [
+  "cargo run --release --example screenshots",
+  "python3 scripts/compress-screenshots.py",
+]
+
 [tasks.ci]
 description = "Everything CI runs"
-depends = ["lint", "test"]
+depends = ["lint", "test", "site-check"]
 
 [tasks.package]
 description = "Build installers for this platform into target/dist"

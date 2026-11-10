@@ -1983,6 +1983,8 @@ dependencies = [
  "libpulse-binding",
  "libpulse-simple-binding",
  "naga",
+ "png",
+ "pollster",
 ]
 
 [[package]]

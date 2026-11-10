@@ -1,0 +1,70 @@
+name: Site
+
+# Builds the website (scripts/build-site.py) and deploys it to GitHub Pages:
+# - on every push to main, so text, screenshots and dependency data stay current;
+# - after every Release run, so download links point at the newest installers
+#   (a release created by the workflow token can't trigger this directly);
+# - weekly, so the RustSec advisory scan stays fresh even when nothing changes.
+on:
+  push:
+    branches: [main]
+  workflow_run:
+    workflows: [Release]
+    types: [completed]
+  schedule:
+    - cron: "0 6 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: jdx/mise-action@v2
+        with:
+          install_args: rust
+
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-audit
+
+      - name: Latest release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view -R "$GITHUB_REPOSITORY" \
+            --json tagName,name,publishedAt,url,assets > release.json || rm -f release.json
+
+      - name: Advisory scan
+        # Findings are reported on the page, not treated as a build failure.
+        run: cargo audit --json > audit.json || true
+
+      - name: Build site
+        run: |
+          args=(--out _site --audit-json audit.json)
+          [ -s release.json ] && args+=(--release-json release.json)
+          python3 scripts/build-site.py "${args[@]}"
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

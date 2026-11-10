@@ -31,3 +31,15 @@ read in two minutes.
 - Measure reaction tuning with `cargo run --release --example pulse_probe` before and
   after. Don't tune by guesswork.
 - `mise run smoke` plays audio on the speakers. Ask before running it.
+
+## Keep the website current
+
+The site (https://jakevose.github.io/polymoire/) deploys itself on every push to `main`
+and after every release, so most of it can't go stale. The parts that need a person:
+
+- **Adding or removing a dependency:** update `site/dependencies.toml` (risk, role, why).
+  `mise run site-check` fails until you do.
+- **Visuals changed noticeably** (shader, traits, reactions): run `mise run screenshots`,
+  look at the results, and commit the new `.webp` files.
+- **Claims on the page** (`site/index.html`: privacy, what the app does, the vibe-coded
+  section) must stay true. Update them when behavior changes.

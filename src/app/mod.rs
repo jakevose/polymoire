@@ -309,53 +309,15 @@ impl PolymoireApp {
     }
 
     fn uniforms(&self, size: [u32; 2], logical_w: f32) -> Uniforms {
-        let t = &self.traits;
-        let sim = self.sim;
-        let v = self.visual;
-        let (pa, pb, pm) = t.discrete(Key::Field, sim);
-        let (ta, tb, tm) = t.discrete(Key::Texture, sim);
-        let (fa, fb, fm) = t.discrete(Key::Effect, sim);
-        let (sa, sb, sm) = t.scalar_pair(Key::Symmetry, sim);
-        let mut u = Uniforms {
-            res: [size[0] as f32, size[1] as f32],
-            px: size[0] as f32 / logical_w.max(1.0),
-            t: self.flow_t as f32,
-            clock: sim as f32,
-            ang: self.ang as f32 + v.ang_off,
-            pat_a: pa as f32,
-            pat_b: pb as f32,
-            pat_m: pm,
-            sym_a: sa,
-            sym_b: sb,
-            sym_m: sm,
-            tex_a: ta as f32,
-            tex_b: tb as f32,
-            tex_m: tm,
-            fx_a: fa as f32,
-            fx_b: fb as f32,
-            fx_m: fm,
-            warp: t.scalar(Key::Warp, sim) + v.warp_add,
-            scale: t.scalar(Key::Scale, sim),
-            chroma: t.scalar(Key::Chroma, sim) + v.chroma_add,
-            mosaic: t.scalar(Key::Mosaic, sim),
-            zoom: v.zoom,
-            expo: v.expo,
-            hue: v.hue,
-            spark: v.spark,
-            vig: v.vig,
-            jelly: v.jelly,
-            jelly_t: v.jelly_t,
-            morph_a: v.morph_a,
-            morph_b: v.morph_b,
-            morph_m: v.morph_m,
-            morph_amp: v.morph_amp,
-            motes: v.motes,
-            mote_t: v.mote_t,
-            mote_size: v.mote_size,
-            ..Default::default()
-        };
-        u.set_palette(&t.palette(sim));
-        u
+        Uniforms::for_frame(
+            &self.traits,
+            self.sim,
+            &self.visual,
+            self.flow_t,
+            self.ang,
+            size,
+            logical_w,
+        )
     }
 
     fn handle_keys(&mut self, ctx: &egui::Context) {

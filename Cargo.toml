@@ -33,6 +33,10 @@ libpulse-simple-binding = "2"
 [dev-dependencies]
 # Must stay on the same major version as the naga that eframe's wgpu uses.
 naga = { version = "30", features = ["wgsl-in"] }
+# Screenshot tool (examples/screenshots.rs). Both are already in the tree via eframe.
+pollster = "1"
+png = "0.18"
+
 
 [profile.release]
 opt-level = 3

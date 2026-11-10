@@ -1,0 +1,76 @@
+# Risk register for every crate Polymoire depends on directly (Cargo.toml).
+#
+# The site generator (scripts/build-site.py) shows these on the website next to versions
+# and tree sizes it reads from Cargo.lock / `cargo tree`. `mise run site-check` (part of
+# `mise run ci` and CI) fails if a direct dependency is missing here or an entry has no
+# matching dependency, so adding a crate means writing down why it's acceptable.
+#
+# risk: "low" | "medium" | "high"
+#   low    - small or very widely used, little platform code, nothing privacy-sensitive
+#   medium - large tree, lots of unsafe platform bindings, a privacy-sensitive job, or a
+#            small maintainer base
+#   high   - unmaintained, known unfixed advisories, or few users
+# scope: "app" (shipped in the app), "linux" (shipped on Linux only), "dev" (tests and
+#   tools only, never shipped)
+
+[eframe]
+scope = "app"
+risk = "medium"
+role = "Window, GPU setup and input: egui's native app framework."
+why = """Pulls in most of the tree: winit (windowing), wgpu (GPU), accesskit, and native \
+bindings to each OS (objc2, windows-sys, Wayland/X11), much of it unsafe FFI. Pre-1.0 with \
+breaking releases every few months. Offset by wide use and an active maintainer (Rerun)."""
+
+[egui]
+scope = "app"
+risk = "low"
+role = "The on-screen controls (trait rows, buttons)."
+why = """Pure Rust immediate-mode UI with a small tree, very widely used, same maintainers \
+as eframe."""
+
+[cpal]
+scope = "app"
+risk = "medium"
+role = "Audio: plays the demo beat and captures what the computer is playing."
+why = """Privacy-sensitive by design: system-audio capture can hear everything your \
+computer plays (Polymoire only analyzes it in memory; nothing is recorded, saved or sent). \
+Unsafe FFI to WASAPI, Core Audio and ALSA. Community-maintained (RustAudio) with a small \
+team, but the standard Rust audio crate."""
+
+[bytemuck]
+scope = "app"
+risk = "low"
+role = "Copies the shader's settings block to the GPU."
+why = """Tiny and ubiquitous. Its casts are unsafe internally, but the derive macros check \
+layout at compile time."""
+
+[libpulse-binding]
+scope = "linux"
+risk = "medium"
+role = "Linux: reads the PulseAudio / PipeWire monitor of your output."
+why = """FFI to the system libpulse. Mature but maintained by a single person with low \
+activity."""
+
+[libpulse-simple-binding]
+scope = "linux"
+risk = "medium"
+role = "Linux: the simple PulseAudio API used for capture."
+why = "Same maintainer and FFI surface as libpulse-binding."
+
+[naga]
+scope = "dev"
+risk = "low"
+role = "Tests: validates the WGSL shader and its uniform layout."
+why = "Never shipped. Part of the wgpu project."
+
+[pollster]
+scope = "dev"
+risk = "low"
+role = "Screenshot tool: waits for the GPU."
+why = "Never shipped. Tiny; already in the app's tree through eframe."
+
+[png]
+scope = "dev"
+risk = "low"
+role = "Screenshot tool: writes PNG files."
+why = "Never shipped. Widely used image-rs crate; already in the app's tree through eframe."
