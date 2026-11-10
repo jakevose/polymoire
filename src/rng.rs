@@ -39,10 +39,35 @@ impl Rng {
     pub fn chance(&mut self, p: f32) -> bool {
         self.f32() < p
     }
+
+    /// Uniform in 0..n (n > 0).
+    pub fn below(&mut self, n: usize) -> usize {
+        (self.next_u64() % n as u64) as usize
+    }
+
+    /// Fisher–Yates shuffle.
+    pub fn shuffle<T>(&mut self, v: &mut [T]) {
+        for i in (1..v.len()).rev() {
+            v.swap(i, self.below(i + 1));
+        }
+    }
 }
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn shuffle_is_a_permutation_and_varies() {
+        let mut r = Rng::new(5);
+        let mut a: Vec<usize> = (0..13).collect();
+        r.shuffle(&mut a);
+        let mut sorted = a.clone();
+        sorted.sort();
+        assert_eq!(sorted, (0..13).collect::<Vec<_>>());
+        let mut b: Vec<usize> = (0..13).collect();
+        r.shuffle(&mut b);
+        assert_ne!(a, b);
+    }
+
     use super::*;
 
     #[test]

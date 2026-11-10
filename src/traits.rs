@@ -420,10 +420,20 @@ fn lerp(a: f32, b: f32, t: f32) -> f32 {
     a + (b - a) * t
 }
 
+/// Most traits one automatic shift takes (drops and moods take two, timed shifts one or two).
+const MAX_PER_SHIFT: usize = 2;
+
 pub struct Traits {
     pub defs: Vec<TraitDef>,
     pub state: Vec<TraitState>,
     rng: Rng,
+    /// Shuffle bag of trait indices still to change this round. Each shift takes the next
+    /// one or two that can move; when none are left the bag is refilled in a new order.
+    /// So every trait gets its turn before any trait changes twice.
+    bag: Vec<usize>,
+    /// The traits that changed most recently (the last shift, plus any arrow clicks since),
+    /// kept out of the front of the next bag so a refill never repeats them straight away.
+    recent: Vec<usize>,
 }
 
 impl Traits {
@@ -443,7 +453,39 @@ impl Traits {
                 }
             })
             .collect();
-        Traits { defs, state, rng }
+        Traits {
+            defs,
+            state,
+            rng,
+            bag: Vec::new(),
+            recent: Vec::new(),
+        }
+    }
+
+    /// Refills the bag with every trait in a new random order, keeping anything in `recent`
+    /// out of the first `head` places.
+    fn refill_bag(&mut self, head: usize) {
+        let mut bag: Vec<usize> = (0..self.defs.len()).collect();
+        self.rng.shuffle(&mut bag);
+        let head = head.min(bag.len());
+        for i in 0..head {
+            if !self.recent.contains(&bag[i]) {
+                continue;
+            }
+            let fresh: Vec<usize> = (head..bag.len())
+                .filter(|&j| !self.recent.contains(&bag[j]))
+                .collect();
+            if !fresh.is_empty() {
+                let j = fresh[self.rng.below(fresh.len())];
+                bag.swap(i, j);
+            }
+        }
+        self.bag = bag;
+    }
+
+    /// The traits still waiting for their turn this round, next first.
+    pub fn bag(&self) -> &[usize] {
+        &self.bag
     }
 
     pub fn index_of(&self, key: Key) -> usize {
@@ -557,6 +599,11 @@ impl Traits {
         if s.from == s.to {
             s.dur = 1.0;
         }
+        // A trait the user just changed has had its turn this round.
+        self.bag.retain(|&k| k != i);
+        if !self.recent.contains(&i) {
+            self.recent.push(i);
+        }
     }
 
     pub fn toggle_lock(&mut self, i: usize) {
@@ -587,17 +634,35 @@ impl Traits {
         reduced_motion: bool,
         bias: &dyn Fn(Key, &str) -> f32,
     ) -> Vec<usize> {
-        let mut free: Vec<(usize, f64)> = (0..self.state.len())
-            .filter(|&i| {
-                let s = &self.state[i];
-                !s.locked && !s.moving() && (audio_active || self.defs[i].key != Key::Reaction)
-            })
-            .map(|i| (i, self.state[i].last + (self.rng.f32() as f64 - 0.5) * 14.0))
-            .collect();
-        free.sort_by(|a, b| a.1.total_cmp(&b.1));
         let n = n.unwrap_or_else(|| if self.rng.chance(0.55) { 1 } else { 2 });
+        let can_move = |t: &Self, i: usize| {
+            let s = &t.state[i];
+            !s.locked && !s.moving() && (audio_active || t.defs[i].key != Key::Reaction)
+        };
+        // Take the next traits from the bag that can move now. Pinned, already moving or
+        // (without audio) Reaction are passed over and keep their place. When the bag has
+        // nothing left to give, refill it once.
+        let mut picks = Vec::new();
+        let mut refilled = false;
+        while picks.len() < n {
+            let next = self
+                .bag
+                .iter()
+                .position(|&i| can_move(self, i) && !picks.contains(&i));
+            match next {
+                Some(at) => picks.push(self.bag.remove(at)),
+                None if !refilled => {
+                    refilled = true;
+                    self.recent.extend(picks.iter().copied());
+                    // Keep what just changed clear of the rest of this shift and all of the
+                    // next one.
+                    self.refill_bag(n - picks.len() + MAX_PER_SHIFT);
+                }
+                None => break,
+            }
+        }
         let mut changed = Vec::new();
-        for &(i, _) in free.iter().take(n) {
+        for &i in &picks {
             let key = self.defs[i].key;
             let to = pick_weighted_by(
                 &self.defs[i].opts,
@@ -612,6 +677,9 @@ impl Traits {
             s.dur = base * if reduced_motion { 1.6 } else { 1.0 };
             s.last = sim;
             changed.push(i);
+        }
+        if !changed.is_empty() {
+            self.recent = changed.clone();
         }
         changed
     }
@@ -840,6 +908,86 @@ mod tests {
             t.settle(sim + 5.0);
         }
         assert!(abyss > 100, "Abyss picked {abyss}/400 times");
+    }
+
+    /// Runs `shifts` automatic shifts, letting each finish; returns what each one changed.
+    fn shifts(t: &mut Traits, shifts: usize) -> Vec<Vec<usize>> {
+        (0..shifts)
+            .map(|k| {
+                let sim = k as f64 * 10.0;
+                let c = t.shift(sim, None, None, true, false);
+                t.settle(sim + 9.0);
+                c
+            })
+            .collect()
+    }
+
+    #[test]
+    fn every_trait_gets_a_turn_before_any_repeats() {
+        for seed in 0..20 {
+            let mut t = Traits::new(Rng::new(seed));
+            let n = t.defs.len();
+            let flat: Vec<usize> = shifts(&mut t, 120).into_iter().flatten().collect();
+            for round in flat.chunks_exact(n) {
+                let mut r = round.to_vec();
+                r.sort();
+                assert_eq!(r, (0..n).collect::<Vec<_>>(), "seed {seed}: {round:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn nothing_changes_in_two_shifts_in_a_row() {
+        // Including across a refill: the new round never opens with what just changed.
+        for seed in 0..50 {
+            let mut t = Traits::new(Rng::new(seed));
+            let batches = shifts(&mut t, 200);
+            for w in batches.windows(2) {
+                assert!(
+                    w[1].iter().all(|i| !w[0].contains(i)),
+                    "seed {seed}: {:?} then {:?}",
+                    w[0],
+                    w[1]
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn rounds_come_in_different_orders() {
+        let mut t = traits();
+        let n = t.defs.len();
+        let flat: Vec<usize> = shifts(&mut t, 60).into_iter().flatten().collect();
+        let rounds: Vec<&[usize]> = flat.chunks_exact(n).collect();
+        assert!(rounds.windows(2).any(|w| w[0] != w[1]));
+    }
+
+    #[test]
+    fn pinned_traits_keep_their_place_and_the_rest_keep_cycling() {
+        let mut t = traits();
+        let p = t.index_of(Key::Palette);
+        t.toggle_lock(p);
+        let flat: Vec<usize> = shifts(&mut t, 80).into_iter().flatten().collect();
+        assert!(!flat.contains(&p));
+        let others = t.defs.len() - 1;
+        for round in flat.chunks_exact(others) {
+            let mut r = round.to_vec();
+            r.sort();
+            r.dedup();
+            assert_eq!(r.len(), others, "{round:?}");
+        }
+    }
+
+    #[test]
+    fn an_arrow_click_counts_as_that_traits_turn() {
+        let mut t = traits();
+        shifts(&mut t, 1);
+        let next = t.bag()[0];
+        t.step_option(next, 1, 15.0, 1.0);
+        t.settle(20.0);
+        assert!(!t.bag().contains(&next));
+        let c = t.shift(30.0, Some(2), None, true, false);
+        assert!(!c.contains(&next), "{c:?}");
     }
 
     #[test]

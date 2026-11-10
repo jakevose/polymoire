@@ -9,6 +9,9 @@ chroma, mosaic) and moves to whatever your computer is playing.
 - **System audio.** Polymoire listens to your computer's sound output, so any player
   (Spotify, a browser tab, a DAW) drives it. Nothing is recorded or saved.
 - **Demo beat.** A built-in 120 bpm house loop; toggle it with the button or `D`.
+- **Every trait gets a turn.** Automatic changes walk through all the traits in a
+  shuffled order, one or two at a time, before any changes again, and never change the
+  same trait twice in a row.
 - **Change a trait** with the ◀ ▶ arrows on its row; **pin it** with the dot on the right
   so it stops changing on its own (the arrows still work on pinned traits).
 - **Energy** sets how lively the picture is even without music: Calm, Lively, Restless,
@@ -23,6 +26,9 @@ chroma, mosaic) and moves to whatever your computer is playing.
 
 ### Comfort: kinetic without motion sickness or flashing
 
+Kicks push the patterns' own motion: each one swells them forward, with the warp and
+wobble, and they coast until the next. Only real kicks do this (not bass notes, hats or
+the predicted beat), so the picture pulses with the drums and rests in breakdowns.
 Most movement is local: the image wobbles in many directions at once ("jelly"), shapes
 re-form in eased steps on the beat ("re-form"), and motes orbit inside their own small
 cells. Whole-view zooms and spins happen only at **half the tempo** (every other beat):
