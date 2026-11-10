@@ -1,6 +1,6 @@
 //! The on-screen controls: trait ledger (click to pin), audio deck and transport.
 
-use super::DriftApp;
+use super::PolymoireApp;
 use eframe::egui::{self, Align2, Color32, CornerRadius, FontId, Sense, Stroke};
 
 const INK: Color32 = Color32::from_rgb(238, 240, 244);
@@ -43,7 +43,7 @@ fn rule(ui: &mut egui::Ui) {
         .hline(r.x_range(), r.center().y, Stroke::new(1.0, LINE));
 }
 
-pub fn show(ctx: &egui::Context, app: &mut DriftApp) {
+pub fn show(ctx: &egui::Context, app: &mut PolymoireApp) {
     if !app.hud_visible {
         return;
     }
@@ -68,7 +68,7 @@ pub fn show(ctx: &egui::Context, app: &mut DriftApp) {
         });
 }
 
-fn transport(ctx: &egui::Context, app: &mut DriftApp) {
+fn transport(ctx: &egui::Context, app: &mut PolymoireApp) {
     let screen = ctx.content_rect();
     egui::Area::new(egui::Id::new("transport"))
         .pivot(Align2::RIGHT_TOP)
@@ -92,14 +92,14 @@ fn transport(ctx: &egui::Context, app: &mut DriftApp) {
         });
 }
 
-fn panel(ui: &mut egui::Ui, app: &mut DriftApp, compact: bool) {
+fn panel(ui: &mut egui::Ui, app: &mut PolymoireApp, compact: bool) {
     ui.spacing_mut().item_spacing = egui::vec2(6.0, 2.0);
     let active = app.pulse.active();
 
     // Header
     ui.horizontal(|ui| {
         ui.label(
-            egui::RichText::new("DRIFTFIELD")
+            egui::RichText::new("POLYMOIRE")
                 .font(mono(13.0))
                 .strong()
                 .color(INK),
@@ -201,7 +201,7 @@ fn arrow(p: &egui::Painter, center: egui::Pos2, dir: f32, color: Color32) {
 
 /// One trait: ◀ LABEL value ▶ (pin). The arrows step through the options; only the
 /// dot on the right pins.
-fn trait_row(ui: &mut egui::Ui, app: &mut DriftApp, i: usize, active: bool) {
+fn trait_row(ui: &mut egui::Ui, app: &mut PolymoireApp, i: usize, active: bool) {
     let (rect, _) = ui.allocate_exact_size(egui::vec2(WIDTH, 20.0), Sense::hover());
     let st = app.traits.state[i].clone();
     let def_label = app.traits.defs[i].label;
@@ -307,11 +307,7 @@ fn trait_row(ui: &mut egui::Ui, app: &mut DriftApp, i: usize, active: bool) {
     });
 }
 
-fn meters(
-    ui: &mut egui::Ui,
-    l: &driftfield::analysis::Levels,
-    pulse: &driftfield::reactions::Pulse,
-) {
+fn meters(ui: &mut egui::Ui, l: &polymoire::analysis::Levels, pulse: &polymoire::reactions::Pulse) {
     let gate = pulse.gate;
     let (rect, _) = ui.allocate_exact_size(egui::vec2(WIDTH, 24.0), Sense::hover());
     let p = ui.painter_at(rect);

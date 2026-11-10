@@ -1,9 +1,9 @@
 //! GPU side: renders the scene offscreen at an adaptive resolution, then scales it into
 //! egui's frame as a paint callback.
 
-use driftfield::uniforms::Uniforms;
-use driftfield::SHADER_WGSL;
 use eframe::egui_wgpu::{self, wgpu};
+use polymoire::uniforms::Uniforms;
+use polymoire::SHADER_WGSL;
 
 const SCENE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
 
@@ -26,7 +26,7 @@ struct Target {
 pub fn init(rs: &egui_wgpu::RenderState) {
     let device = &rs.device;
     let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-        label: Some("driftfield"),
+        label: Some("polymoire"),
         source: wgpu::ShaderSource::Wgsl(SHADER_WGSL.into()),
     });
 

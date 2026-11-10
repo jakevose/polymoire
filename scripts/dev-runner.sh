@@ -16,7 +16,7 @@ mise trust --quiet . >/dev/null 2>&1 || mise trust .
 echo "Installing the pinned Rust toolchain (first run only)…"
 mise install
 
-echo "Driftfield dev runner is waiting for requests (Ctrl-C to stop)."
+echo "Polymoire dev runner is waiting for requests (Ctrl-C to stop)."
 while true; do
   if [ -f "$dir/request" ]; then
     task=$(tr -d '[:space:]' < "$dir/request")

@@ -3,7 +3,7 @@
 <plist version="1.0">
 <dict>
 	<key>NSAudioCaptureUsageDescription</key>
-	<string>Driftfield listens to what your Mac is playing so the visuals can move to the music. Nothing is recorded or saved.</string>
+	<string>Polymoire listens to what your Mac is playing so the visuals can move to the music. Nothing is recorded or saved.</string>
 	<key>NSHighResolutionCapable</key>
 	<true/>
 </dict>

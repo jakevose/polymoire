@@ -6,32 +6,32 @@ mod hud;
 mod render;
 
 use audio::{AudioEngine, AudioFrame};
-use driftfield::quality::Quality;
-use driftfield::reactions::{is_drop, FrameInput, Pulse, Sound, Visual};
-use driftfield::rng::Rng;
-use driftfield::traits::{Key, Traits};
-use driftfield::uniforms::Uniforms;
-use driftfield::vibe::{self, Vibe};
 use eframe::egui;
 use eframe::egui_wgpu;
+use polymoire::quality::Quality;
+use polymoire::reactions::{is_drop, FrameInput, Pulse, Sound, Visual};
+use polymoire::rng::Rng;
+use polymoire::traits::{Key, Traits};
+use polymoire::uniforms::Uniforms;
+use polymoire::vibe::{self, Vibe};
 use std::time::Instant;
 
 pub fn run() -> eframe::Result {
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
-            .with_title("Driftfield")
+            .with_title("Polymoire")
             .with_inner_size([1280.0, 800.0])
             .with_min_inner_size([480.0, 360.0]),
         ..Default::default()
     };
     eframe::run_native(
-        "Driftfield",
+        "Polymoire",
         options,
-        Box::new(|cc| Ok(Box::new(DriftApp::new(cc)))),
+        Box::new(|cc| Ok(Box::new(PolymoireApp::new(cc)))),
     )
 }
 
-pub struct DriftApp {
+pub struct PolymoireApp {
     traits: Traits,
     pulse: Pulse,
     quality: Quality,
@@ -55,7 +55,7 @@ pub struct DriftApp {
     smoke: Option<Smoke>,
 }
 
-/// Self-test mode (`DRIFTFIELD_SMOKE_SECS`): run for a while, save a screenshot, print a
+/// Self-test mode (`POLYMOIRE_SMOKE_SECS`): run for a while, save a screenshot, print a
 /// report and quit. Used by `mise run smoke`.
 struct Smoke {
     secs: f64,
@@ -68,17 +68,17 @@ struct Smoke {
     shot_saved: Option<String>,
 }
 
-impl DriftApp {
+impl PolymoireApp {
     fn new(cc: &eframe::CreationContext<'_>) -> Self {
         let rs = cc
             .wgpu_render_state
             .as_ref()
-            .expect("Driftfield needs the wgpu renderer");
+            .expect("Polymoire needs the wgpu renderer");
         render::init(rs);
         cc.egui_ctx.set_visuals(egui::Visuals::dark());
         let traits = Traits::new(Rng::from_time());
         let n = traits.defs.len();
-        let smoke = std::env::var("DRIFTFIELD_SMOKE_SECS")
+        let smoke = std::env::var("POLYMOIRE_SMOKE_SECS")
             .ok()
             .and_then(|v| v.parse::<f64>().ok())
             .map(|secs| Smoke {
@@ -92,10 +92,10 @@ impl DriftApp {
                 shot_saved: None,
             });
         let mut audio = AudioEngine::new();
-        if std::env::var("DRIFTFIELD_DEMO").is_ok_and(|v| v == "1") {
+        if std::env::var("POLYMOIRE_DEMO").is_ok_and(|v| v == "1") {
             audio.set_demo(true);
         }
-        DriftApp {
+        PolymoireApp {
             traits,
             pulse: Pulse::default(),
             quality: Quality::default(),
@@ -131,7 +131,7 @@ impl DriftApp {
         let events = ctx.input(|i| i.raw.events.clone());
         for e in events {
             if let egui::Event::Screenshot { image, .. } = e {
-                let dir = std::env::var("DRIFTFIELD_SMOKE_DIR").unwrap_or_else(|_| "target".into());
+                let dir = std::env::var("POLYMOIRE_SMOKE_DIR").unwrap_or_else(|_| "target".into());
                 let path = std::path::Path::new(&dir).join("smoke.ppm");
                 let mut out =
                     format!("P6\n{} {}\n255\n", image.size[0], image.size[1]).into_bytes();
@@ -387,7 +387,7 @@ impl DriftApp {
     }
 }
 
-impl eframe::App for DriftApp {
+impl eframe::App for PolymoireApp {
     fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         let now = Instant::now();
         let dt = now.duration_since(self.last_frame).as_secs_f64().min(0.1);

@@ -1,4 +1,4 @@
-# Development tooling for Driftfield. Run `mise install` once, then `mise run <task>`.
+# Development tooling for Polymoire. Run `mise install` once, then `mise run <task>`.
 [tools]
 rust = { version = "1.97", components = "clippy,rustfmt" }
 
@@ -23,16 +23,16 @@ run = "cargo check --all-targets"
 
 [tasks.smoke]
 description = "Launch the app for 20 seconds with the demo beat, then print a report"
-env = { DRIFTFIELD_SMOKE_SECS = "20", DRIFTFIELD_DEMO = "1" }
+env = { POLYMOIRE_SMOKE_SECS = "20", POLYMOIRE_DEMO = "1" }
 run = "cargo run --release"
 
 [tasks.app]
-description = "macOS: build and open Driftfield.app (needed for system-audio permission)"
+description = "macOS: build and open Polymoire.app (needed for system-audio permission)"
 run = "bash scripts/mac-app.sh"
 
 [tasks.app-smoke]
 description = "macOS: smoke test the app bundle against system audio"
-run = "bash scripts/mac-app.sh DRIFTFIELD_SMOKE_SECS=25 DRIFTFIELD_SMOKE_DIR={{config_root}}/target"
+run = "bash scripts/mac-app.sh POLYMOIRE_SMOKE_SECS=25 POLYMOIRE_SMOKE_DIR={{config_root}}/target"
 
 [tasks.test]
 description = "Run the automated test suite"

@@ -1,4 +1,4 @@
-// Driftfield scene and blit shaders.
+// Polymoire scene and blit shaders.
 // The scene pass renders offscreen at an adaptive resolution; the blit pass scales it to the window.
 // Each field, texture and effect is tagged `// F<n>`, `// T<n>`, `// E<n>`; a test checks that
 // every option in the Rust catalog has an implementation here.

@@ -134,7 +134,7 @@ pub fn start(feed: SharedFeed, status: Arc<Mutex<String>>) -> Result<Capture, St
             };
             let pa = match Simple::new(
                 None,
-                "Driftfield",
+                "Polymoire",
                 Direction::Record,
                 Some("@DEFAULT_MONITOR@"),
                 "System audio visualizer",

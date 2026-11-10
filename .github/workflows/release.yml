@@ -70,7 +70,7 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: driftfield-${{ matrix.target }}
+          name: polymoire-${{ matrix.target }}
           path: |
             target/dist/*.deb
             target/dist/*.AppImage

@@ -1,18 +1,18 @@
 [package]
-name = "driftfield"
+name = "polymoire"
 version = "0.1.0"
 edition = "2021"
 rust-version = "1.88"
 description = "A generative visualizer that drifts between looks and moves to whatever your computer is playing."
 license = "MIT"
-default-run = "driftfield"
+default-run = "polymoire"
 
 [lib]
-name = "driftfield"
+name = "polymoire"
 path = "src/lib.rs"
 
 [[bin]]
-name = "driftfield"
+name = "polymoire"
 path = "src/main.rs"
 
 [dependencies]
@@ -46,11 +46,11 @@ panic = "abort"
 opt-level = 2
 
 [package.metadata.packager]
-product-name = "Driftfield"
-identifier = "app.driftfield.visualizer"
+product-name = "Polymoire"
+identifier = "app.polymoire.visualizer"
 category = "Entertainment"
 out-dir = "target/dist"
-binaries = [{ path = "driftfield", main = true }]
+binaries = [{ path = "polymoire", main = true }]
 
 [package.metadata.packager.macos]
 minimum-system-version = "11.0"

@@ -1,8 +1,8 @@
 //! End to end without a sound card: the demo synth feeds the analyzer exactly as the app
 //! does, and the beat clock must find 120 bpm and keep time through the breakdown.
 
-use driftfield::analysis::Analyzer;
-use driftfield::demo::{DemoSynth, BPM};
+use polymoire::analysis::Analyzer;
+use polymoire::demo::{DemoSynth, BPM};
 
 const SR: f32 = 48_000.0;
 

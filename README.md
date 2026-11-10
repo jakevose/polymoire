@@ -1,4 +1,4 @@
-# Driftfield
+# Polymoire
 
 A generative visualizer for Windows, macOS and Linux. It drifts between looks one or two
 traits at a time (palette, field, symmetry, texture, effect, warp, scale, tempo, spin,
@@ -6,7 +6,7 @@ chroma, mosaic) and moves to whatever your computer is playing.
 
 ## Using it
 
-- **System audio.** Driftfield listens to your computer's sound output, so any player
+- **System audio.** Polymoire listens to your computer's sound output, so any player
   (Spotify, a browser tab, a DAW) drives it. Nothing is recorded or saved.
 - **Demo beat.** A built-in 120 bpm house loop; toggle it with the button or `D`.
 - **Change a trait** with the ◀ ▶ arrows on its row; **pin it** with the dot on the right
@@ -32,7 +32,7 @@ spinning on. **Reduce motion** turns the camera moves off. Brightness may rise a
 | Platform | How | Notes |
 | --- | --- | --- |
 | Windows 10/11 | WASAPI loopback of the default output | Works out of the box. |
-| macOS 14.6+ | Core Audio process tap | First run asks for **System Audio Recording** permission (System Settings → Privacy & Security). Only an app bundle can ask, so run `Driftfield.app` (`mise run app` in development), not the bare binary. Older macOS runs the visuals and demo beat without system audio. |
+| macOS 14.6+ | Core Audio process tap | First run asks for **System Audio Recording** permission (System Settings → Privacy & Security). Only an app bundle can ask, so run `Polymoire.app` (`mise run app` in development), not the bare binary. Older macOS runs the visuals and demo beat without system audio. |
 | Linux | PulseAudio / PipeWire monitor of the default output | Needs `libpulse` (present on standard desktops with PulseAudio or PipeWire). |
 
 ## Development
@@ -47,7 +47,7 @@ mise run test       # automated tests
 mise run lint       # rustfmt + clippy
 mise run ci         # everything CI runs
 mise run smoke      # launch for 20 s on the demo beat, save target/smoke.ppm, print a report
-mise run app        # macOS: build and open Driftfield.app (needed for system audio)
+mise run app        # macOS: build and open Polymoire.app (needed for system audio)
 mise run app-smoke  # macOS: 25 s smoke test of the app bundle against system audio
 mise run package    # installers for this platform → target/dist
 ```

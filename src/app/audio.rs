@@ -2,8 +2,8 @@
 
 use super::capture::{self, Capture};
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
-use driftfield::analysis::{Analyzer, Hits, Levels, Rhythm};
-use driftfield::demo::DemoSynth;
+use polymoire::analysis::{Analyzer, Hits, Levels, Rhythm};
+use polymoire::demo::DemoSynth;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 

@@ -1,4 +1,4 @@
-//! Driftfield: a generative visualizer that drifts between looks one or two traits at a time
+//! Polymoire: a generative visualizer that drifts between looks one or two traits at a time
 //! and reacts to whatever the computer is playing.
 //!
 //! The library holds everything that can be tested without a window or a sound card:

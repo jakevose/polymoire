@@ -1,8 +1,8 @@
 //! The shader is validated on every platform without a GPU, and its uniform layout is
 //! checked against the Rust struct so the two can't drift apart.
 
-use driftfield::uniforms::Uniforms;
-use driftfield::SHADER_WGSL;
+use polymoire::uniforms::Uniforms;
+use polymoire::SHADER_WGSL;
 use std::mem::{offset_of, size_of};
 
 fn module() -> naga::Module {
@@ -71,7 +71,7 @@ fn uniform_layout_matches_rust_struct() {
 
 #[test]
 fn every_catalog_option_has_a_shader_implementation() {
-    use driftfield::traits::{catalog, Key};
+    use polymoire::traits::{catalog, Key};
     for (key, tag) in [(Key::Field, "F"), (Key::Texture, "T"), (Key::Effect, "E")] {
         let def = catalog().into_iter().find(|d| d.key == key).unwrap();
         for (k, opt) in def.opts.iter().enumerate() {
