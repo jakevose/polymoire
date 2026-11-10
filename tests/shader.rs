@@ -52,7 +52,8 @@ fn uniform_layout_matches_rust_struct() {
     let rust = fields!(
         res, px, t, clock, ang, pat_m, sym_a, sym_b, sym_m, tex_m, fx_m, warp, scale, chroma,
         mosaic, zoom, expo, hue, spark, vig, ring_r, ring_a, pat_a, pat_b, tex_a, tex_b, fx_a,
-        fx_b, pa, pb, pc, pd
+        fx_b, jelly, jelly_t, morph_a, morph_b, morph_m, morph_amp, motes, mote_t, mote_size, pa,
+        pb, pc, pd
     );
     for (name, off) in rust {
         let member = members
@@ -66,4 +67,27 @@ fn uniform_layout_matches_rust_struct() {
         0,
         "uniform blocks must be 16-byte multiples"
     );
+}
+
+#[test]
+fn every_catalog_option_has_a_shader_implementation() {
+    use driftfield::traits::{catalog, Key};
+    for (key, tag) in [(Key::Field, "F"), (Key::Texture, "T"), (Key::Effect, "E")] {
+        let def = catalog().into_iter().find(|d| d.key == key).unwrap();
+        for (k, opt) in def.opts.iter().enumerate() {
+            let marker = format!("// {tag}{k} ");
+            assert!(
+                SHADER_WGSL.contains(&marker),
+                "{} option {k} ({}) has no `{marker}` in shader.wgsl",
+                def.label,
+                opt.name
+            );
+        }
+        let past = format!("// {tag}{} ", def.opts.len());
+        assert!(
+            !SHADER_WGSL.contains(&past),
+            "shader has more {} than the catalog",
+            def.label
+        );
+    }
 }

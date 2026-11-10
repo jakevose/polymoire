@@ -43,7 +43,18 @@ pub struct Uniforms {
     pub fx_a: f32,
 
     pub fx_b: f32,
-    pub _pad: [f32; 3],
+    pub jelly: f32,
+    pub jelly_t: f32,
+    pub morph_a: f32,
+
+    pub morph_b: f32,
+    pub morph_m: f32,
+    pub morph_amp: f32,
+    pub motes: f32,
+
+    pub mote_t: f32,
+    pub mote_size: f32,
+    pub _pad: [f32; 2],
 
     pub pa: [f32; 4],
     pub pb: [f32; 4],

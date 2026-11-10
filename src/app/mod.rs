@@ -7,7 +7,7 @@ mod render;
 
 use audio::{AudioEngine, AudioFrame};
 use driftfield::quality::Quality;
-use driftfield::reactions::{is_drop, Pulse};
+use driftfield::reactions::{is_drop, FrameInput, Pulse, Visual};
 use driftfield::rng::Rng;
 use driftfield::traits::{Key, Traits};
 use driftfield::uniforms::Uniforms;
@@ -36,6 +36,7 @@ pub struct DriftApp {
     quality: Quality,
     audio: AudioEngine,
     last_audio: AudioFrame,
+    visual: Visual,
     sim: f64,
     flow_t: f64,
     ang: f64,
@@ -98,6 +99,7 @@ impl DriftApp {
             quality: Quality::default(),
             audio,
             last_audio: AudioFrame::default(),
+            visual: Visual::NEUTRAL,
             sim: 0.0,
             flow_t: 0.0,
             ang: 0.0,
@@ -187,6 +189,12 @@ impl DriftApp {
         }
     }
 
+    /// User clicked an arrow: step trait `i` to its previous or next option.
+    pub fn step_trait(&mut self, i: usize, dir: i32) {
+        self.traits.step_option(i, dir, self.sim, 1.2);
+        self.flashed[i] = self.sim;
+    }
+
     /// Shift now: on the next beat grid when music drives timing, otherwise immediately.
     pub fn force_shift(&mut self) {
         self.paused = false;
@@ -201,7 +209,18 @@ impl DriftApp {
     fn step(&mut self, dt: f64) {
         self.quality.frame(dt as f32);
         let a = self.audio.frame();
-        self.pulse.update(dt as f32, &a.levels, a.live, a.beat);
+        let weights = self.traits.reaction(self.sim);
+        let energy = self.traits.scalar(Key::Energy, self.sim);
+        self.visual = self.pulse.frame(FrameInput {
+            // Pausing freezes the picture, including its local motion.
+            dt: if self.paused { 0.0 } else { dt as f32 },
+            levels: &a.levels,
+            live: a.live,
+            beat: a.beat && !self.paused,
+            weights: &weights,
+            energy,
+            reduced_motion: self.reduced_motion,
+        });
         let active = self.pulse.active();
         let motion = if self.reduced_motion { 0.35 } else { 1.0 };
 
@@ -236,10 +255,7 @@ impl DriftApp {
     fn uniforms(&self, size: [u32; 2], logical_w: f32) -> Uniforms {
         let t = &self.traits;
         let sim = self.sim;
-        let levels = &self.last_audio.levels;
-        let v = self
-            .pulse
-            .visual(&t.reaction(sim), levels, self.reduced_motion);
+        let v = self.visual;
         let (pa, pb, pm) = t.discrete(Key::Field, sim);
         let (ta, tb, tm) = t.discrete(Key::Texture, sim);
         let (fa, fb, fm) = t.discrete(Key::Effect, sim);
@@ -271,8 +287,15 @@ impl DriftApp {
             hue: v.hue,
             spark: v.spark,
             vig: v.vig,
-            ring_r: v.ring_r,
-            ring_a: v.ring_a,
+            jelly: v.jelly,
+            jelly_t: v.jelly_t,
+            morph_a: v.morph_a,
+            morph_b: v.morph_b,
+            morph_m: v.morph_m,
+            morph_amp: v.morph_amp,
+            motes: v.motes,
+            mote_t: v.mote_t,
+            mote_size: v.mote_size,
             ..Default::default()
         };
         u.set_palette(&t.palette(sim));

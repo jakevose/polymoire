@@ -9,13 +9,22 @@ chroma, mosaic) and moves to whatever your computer is playing.
 - **System audio.** Driftfield listens to your computer's sound output, so any player
   (Spotify, a browser tab, a DAW) drives it. Nothing is recorded or saved.
 - **Demo beat.** A built-in 120 bpm house loop; toggle it with the button or `D`.
-- **Pin a trait** by clicking it so it stops changing.
+- **Change a trait** with the ◀ ▶ arrows on its row; **pin it** with the dot on the right
+  so it stops changing on its own (the arrows still work on pinned traits).
+- **Energy** sets how lively the picture is even without music: Calm, Lively, Restless,
+  Electric.
 - Keys: `Space` pause · `N` shift now · `H` hide controls · `F` fullscreen · `D` demo beat.
   Double-click the picture for fullscreen; click it to bring hidden controls back.
 - **Reduce motion** slows everything and damps the beat reactions.
 
-Music only changes light and color (brightness, glow, hue, sparkle, ripples). It never
-zooms, bounces or spins the view, which is what causes motion sickness.
+### Comfort: kinetic without motion sickness or flashing
+
+The picture moves a lot, but never all at once. Whole-field motion (zooming, panning,
+spinning to the beat) is what causes motion sickness, so beats instead drive *local*
+motion: the image wobbles in many directions at once ("jelly"), shapes re-form in eased
+steps on the beat ("re-form"), and motes orbit inside their own small cells. Brightness
+may rise at most 10% and changes no faster than 60% per second, so nothing flashes.
+Tests in `src/reactions.rs` enforce both rules.
 
 ### System audio by platform
 

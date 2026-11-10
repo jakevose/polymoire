@@ -4,9 +4,10 @@
 use crate::rng::Rng;
 
 pub type Palette = [[f32; 3]; 4];
-/// Reaction weights: [breathe, pump, glow, shimmer, hue pulse, flicker, ripple].
-/// Reactions only touch light and color, never the camera, to avoid motion sickness.
-pub type ReactionWeights = [f32; 7];
+/// Reaction weights: [breathe, pump, glow, shimmer, hue pulse, jelly, morph, motes].
+/// Reactions change light gently and move the picture locally; they never move the
+/// whole view (no zoom, pan or spin) and never flash.
+pub type ReactionWeights = [f32; 8];
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Key {
@@ -15,6 +16,7 @@ pub enum Key {
     Symmetry,
     Texture,
     Effect,
+    Energy,
     Reaction,
     Warp,
     Scale,
@@ -88,14 +90,15 @@ fn re(name: &'static str, w: ReactionWeights) -> Opt {
 
 pub fn catalog() -> Vec<TraitDef> {
     let h = [0.5, 0.5, 0.5];
+    let one = [1.0, 1.0, 1.0];
     vec![
         TraitDef {
             key: Key::Palette,
             label: "Palette",
             opts: vec![
-                pal("Prism", h, h, [1.0, 1.0, 1.0], [0.0, 0.33, 0.67]),
-                pal("Ember", h, h, [1.0, 1.0, 1.0], [0.0, 0.1, 0.2]),
-                pal("Coral", h, h, [1.0, 1.0, 1.0], [0.3, 0.2, 0.2]),
+                pal("Prism", h, h, one, [0.0, 0.33, 0.67]),
+                pal("Ember", h, h, one, [0.0, 0.1, 0.2]),
+                pal("Coral", h, h, one, [0.3, 0.2, 0.2]),
                 pal("Lime", h, h, [1.0, 1.0, 0.5], [0.8, 0.9, 0.3]),
                 pal("Dune", h, h, [1.0, 0.7, 0.4], [0.0, 0.15, 0.2]),
                 pal("Acid", h, h, [2.0, 1.0, 0.0], [0.5, 0.2, 0.25]),
@@ -110,37 +113,114 @@ pub fn catalog() -> Vec<TraitDef> {
                     "Abyss",
                     [0.2, 0.3, 0.45],
                     [0.25, 0.3, 0.35],
-                    [1.0, 1.0, 1.0],
+                    one,
                     [0.6, 0.55, 0.5],
                 ),
                 pal(
                     "Nocturne",
                     [0.3, 0.18, 0.38],
                     [0.4, 0.25, 0.4],
-                    [1.0, 1.0, 1.0],
+                    one,
                     [0.85, 0.1, 0.3],
+                ),
+                pal(
+                    "Glacier",
+                    [0.6, 0.7, 0.8],
+                    [0.3, 0.25, 0.2],
+                    one,
+                    [0.5, 0.55, 0.6],
+                ),
+                pal(
+                    "Moss",
+                    [0.4, 0.5, 0.3],
+                    [0.25, 0.3, 0.2],
+                    one,
+                    [0.1, 0.15, 0.35],
+                ),
+                pal(
+                    "Rose",
+                    [0.75, 0.55, 0.6],
+                    [0.25, 0.25, 0.25],
+                    one,
+                    [0.0, 0.1, 0.05],
+                ),
+                pal(
+                    "Sunset",
+                    [0.6, 0.4, 0.4],
+                    [0.4, 0.3, 0.3],
+                    [1.0, 0.8, 0.6],
+                    [0.0, 0.15, 0.35],
+                ),
+                pal("Mono", h, h, one, [0.0, 0.0, 0.0]),
+                pal(
+                    "Vapor",
+                    [0.6, 0.5, 0.75],
+                    [0.4, 0.35, 0.25],
+                    one,
+                    [0.9, 0.5, 0.3],
+                ),
+                pal(
+                    "Copper",
+                    [0.5, 0.35, 0.25],
+                    [0.45, 0.3, 0.2],
+                    one,
+                    [0.0, 0.05, 0.1],
+                ),
+                pal(
+                    "Ultraviolet",
+                    [0.35, 0.2, 0.55],
+                    [0.35, 0.25, 0.45],
+                    one,
+                    [0.6, 0.75, 0.95],
+                ),
+                pal(
+                    "Citrus",
+                    [0.7, 0.65, 0.3],
+                    [0.3, 0.3, 0.3],
+                    one,
+                    [0.0, 0.08, 0.45],
                 ),
             ],
         },
         TraitDef {
             key: Key::Field,
             label: "Field",
-            opts: ["Smoke", "Rings", "Cells", "Moiré", "Plasma", "Spiral"]
-                .into_iter()
-                .map(idx)
-                .collect(),
+            opts: [
+                "Smoke",
+                "Rings",
+                "Cells",
+                "Moiré",
+                "Plasma",
+                "Spiral",
+                "Quasicrystal",
+                "Marble",
+                "Ridges",
+                "Truchet",
+                "Honeycomb",
+                "Petals",
+                "Currents",
+                "Interference",
+            ]
+            .into_iter()
+            .map(idx)
+            .collect(),
         },
         TraitDef {
             key: Key::Symmetry,
             label: "Symmetry",
             opts: vec![
                 scw("Free", 1.0, 2.0),
+                sc("Mirror", -1.0),
+                sc("Quad mirror", -2.0),
                 sc("3-fold", 3.0),
                 sc("4-fold", 4.0),
                 sc("5-fold", 5.0),
                 sc("6-fold", 6.0),
+                sc("7-fold", 7.0),
                 sc("8-fold", 8.0),
+                sc("10-fold", 10.0),
                 sc("12-fold", 12.0),
+                scw("16-fold", 16.0, 0.5),
             ],
         },
         TraitDef {
@@ -154,6 +234,11 @@ pub fn catalog() -> Vec<TraitDef> {
                 idx("Hatch"),
                 idx("Dither"),
                 idx("Paper"),
+                idx("Stipple"),
+                idx("Weave"),
+                idx("LCD"),
+                idx("Riso"),
+                idx("Engrave"),
             ],
         },
         TraitDef {
@@ -166,19 +251,37 @@ pub fn catalog() -> Vec<TraitDef> {
                 idx("Bloom"),
                 idx("Duotone"),
                 idx("Invert bands"),
+                idx("Posterize"),
+                idx("Neon"),
+                idx("Thermal"),
+                idx("Chrome"),
+                idx("Iridescent"),
+                idx("Ink"),
+            ],
+        },
+        TraitDef {
+            key: Key::Energy,
+            label: "Energy",
+            opts: vec![
+                sc("Calm", 0.2),
+                sc("Lively", 0.55),
+                scw("Restless", 0.8, 0.8),
+                scw("Electric", 1.0, 0.4),
             ],
         },
         TraitDef {
             key: Key::Reaction,
             label: "Reaction",
             opts: vec![
-                re("Breathe", [1.0, 0.2, 0.3, 0.0, 0.0, 0.0, 0.0]),
-                re("Pump", [0.4, 1.0, 0.0, 0.0, 0.2, 0.0, 0.0]),
-                re("Glow", [0.3, 0.0, 1.0, 0.0, 0.2, 0.0, 0.0]),
-                re("Shimmer", [0.4, 0.0, 0.2, 1.0, 0.0, 0.0, 0.0]),
-                re("Hue pulse", [0.3, 0.2, 0.0, 0.0, 1.0, 0.0, 0.0]),
-                re("Ripple", [0.4, 0.2, 0.0, 0.0, 0.0, 0.0, 1.0]),
-                re("Flicker", [0.2, 0.3, 0.0, 0.2, 0.0, 1.0, 0.0]),
+                re("Breathe", [1.0, 0.0, 0.4, 0.0, 0.0, 0.3, 0.0, 0.0]),
+                re("Pump", [0.3, 1.0, 0.0, 0.0, 0.2, 0.6, 0.0, 0.0]),
+                re("Glow", [0.3, 0.0, 1.0, 0.0, 0.2, 0.2, 0.3, 0.0]),
+                re("Shimmer", [0.2, 0.0, 0.2, 1.0, 0.0, 0.0, 0.0, 1.0]),
+                re("Hue pulse", [0.2, 0.2, 0.0, 0.0, 1.0, 0.3, 0.4, 0.0]),
+                re("Jelly", [0.2, 0.3, 0.0, 0.0, 0.0, 1.0, 0.3, 0.0]),
+                re("Re-form", [0.2, 0.2, 0.2, 0.0, 0.3, 0.2, 1.0, 0.0]),
+                re("Motes", [0.2, 0.0, 0.3, 0.4, 0.0, 0.2, 0.0, 1.0]),
+                re("Bop", [0.2, 0.6, 0.0, 0.0, 0.2, 0.8, 0.8, 0.3]),
             ],
         },
         TraitDef {
@@ -187,6 +290,7 @@ pub fn catalog() -> Vec<TraitDef> {
             opts: vec![
                 sc("Calm", 0.0),
                 sc("Ripple", 0.35),
+                sc("Wave", 0.55),
                 sc("Fold", 0.8),
                 scw("Melt", 1.05, 0.5),
             ],
@@ -195,10 +299,12 @@ pub fn catalog() -> Vec<TraitDef> {
             key: Key::Scale,
             label: "Scale",
             opts: vec![
+                scw("Vast", 1.1, 0.6),
                 sc("Wide", 1.6),
                 sc("Mid", 3.0),
                 sc("Close", 4.8),
                 scw("Dense", 6.0, 0.6),
+                scw("Micro", 9.0, 0.3),
             ],
         },
         TraitDef {
@@ -225,6 +331,7 @@ pub fn catalog() -> Vec<TraitDef> {
             label: "Chroma",
             opts: vec![
                 scw("Clean", 0.0, 2.0),
+                sc("Prism", 0.25),
                 sc("Split", 0.5),
                 scw("Smear", 0.8, 0.6),
             ],
@@ -234,6 +341,7 @@ pub fn catalog() -> Vec<TraitDef> {
             label: "Mosaic",
             opts: vec![
                 scw("Off", 1.0, 4.0),
+                scw("Tiny", 2.5, 0.6),
                 sc("Fine", 4.0),
                 scw("Coarse", 8.0, 0.6),
             ],
@@ -393,7 +501,7 @@ impl Traits {
         let (s, d) = (&self.state[i], &self.defs[i]);
         let get = |k: usize| match d.opts[k].value {
             Value::Reaction(w) => w,
-            _ => [0.0; 7],
+            _ => [0.0; 8],
         };
         let (a, b, m) = (get(s.from), get(s.to), self.mix(i, sim));
         let mut out = a;
@@ -401,6 +509,25 @@ impl Traits {
             *v = lerp(*x, *y, m);
         }
         out
+    }
+
+    /// Steps trait `i` to its previous (`dir < 0`) or next option, wrapping, with a short
+    /// crossfade. Works on pinned traits too: pinning keeps whatever the user chose.
+    pub fn step_option(&mut self, i: usize, dir: i32, sim: f64, dur: f64) {
+        let n = self.defs[i].opts.len() as i32;
+        let progress = self.progress(i, sim);
+        let s = &mut self.state[i];
+        if s.from != s.to && progress > 0.5 {
+            s.from = s.to;
+        }
+        let next = ((s.to as i32 + dir.signum()) % n + n) % n;
+        s.to = next as usize;
+        s.start = sim;
+        s.dur = dur;
+        s.last = sim;
+        if s.from == s.to {
+            s.dur = 1.0;
+        }
     }
 
     pub fn toggle_lock(&mut self, i: usize) {
@@ -483,13 +610,16 @@ mod tests {
     #[test]
     fn catalog_is_well_formed() {
         let defs = catalog();
-        assert_eq!(defs.len(), 12);
+        assert_eq!(defs.len(), 13);
         for d in &defs {
             assert!(d.opts.len() >= 2, "{} needs at least two options", d.label);
             assert!(d.opts.iter().all(|o| o.weight > 0.0));
         }
-        let fields = &defs.iter().find(|d| d.key == Key::Field).unwrap().opts;
-        assert_eq!(fields.len(), 6, "shader expects 6 fields");
+        let names: Vec<&str> = defs
+            .iter()
+            .flat_map(|d| d.opts.iter().map(|o| o.name))
+            .collect();
+        assert!(names.len() > 100, "lists should be broad: {}", names.len());
     }
 
     #[test]
@@ -577,13 +707,56 @@ mod tests {
     fn scalar_interpolates_between_options() {
         let mut t = traits();
         let i = t.index_of(Key::Scale);
-        t.state[i].from = 0; // Wide 1.6
-        t.state[i].to = 1; // Mid 3.0
+        t.state[i].from = 1; // Wide 1.6
+        t.state[i].to = 2; // Mid 3.0
         t.state[i].start = 0.0;
         t.state[i].dur = 2.0;
         assert!((t.scalar(Key::Scale, 0.0) - 1.6).abs() < 1e-6);
         assert!((t.scalar(Key::Scale, 1.0) - 2.3).abs() < 1e-6);
         assert!((t.scalar(Key::Scale, 2.0) - 3.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn arrows_step_and_wrap_both_ways() {
+        let mut t = traits();
+        let i = t.index_of(Key::Field);
+        let n = t.defs[i].opts.len();
+        t.state[i].from = 0;
+        t.state[i].to = 0;
+        t.step_option(i, -1, 10.0, 1.0);
+        assert_eq!(
+            t.state[i].to,
+            n - 1,
+            "left from the first wraps to the last"
+        );
+        t.settle(20.0);
+        t.step_option(i, 1, 20.0, 1.0);
+        assert_eq!(t.state[i].to, 0, "right from the last wraps to the first");
+        assert_eq!(t.state[i].last, 20.0);
+    }
+
+    #[test]
+    fn arrows_work_on_pinned_traits() {
+        let mut t = traits();
+        let i = t.index_of(Key::Palette);
+        t.toggle_lock(i);
+        let before = t.state[i].from;
+        t.step_option(i, 1, 0.0, 1.0);
+        t.settle(2.0);
+        assert_ne!(t.state[i].from, before);
+        assert!(t.state[i].locked);
+    }
+
+    #[test]
+    fn rapid_clicks_keep_moving_forward() {
+        let mut t = traits();
+        let i = t.index_of(Key::Effect);
+        t.state[i].from = 0;
+        t.state[i].to = 0;
+        for k in 0..5 {
+            t.step_option(i, 1, k as f64 * 0.1, 1.2);
+        }
+        assert_eq!(t.state[i].to, 5);
     }
 
     #[test]

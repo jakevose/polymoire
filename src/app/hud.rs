@@ -51,7 +51,7 @@ pub fn show(ctx: &egui::Context, app: &mut DriftApp) {
 
     let screen = ctx.content_rect();
     // Short windows drop the trait ledger so the audio controls always fit.
-    let compact = screen.height() < 600.0;
+    let compact = screen.height() < 620.0;
     egui::Area::new(egui::Id::new("hud"))
         .pivot(Align2::LEFT_BOTTOM)
         .fixed_pos(egui::pos2(screen.left() + 16.0, screen.bottom() - 16.0))
@@ -165,7 +165,7 @@ fn panel(ui: &mut egui::Ui, app: &mut DriftApp, compact: bool) {
     ui.add(
         egui::Label::new(
             egui::RichText::new(
-                "Moves to whatever your computer is playing. Click a trait to pin it. \
+                "Moves to whatever your computer is playing. Arrows change a trait, the dot pins it. \
                  Space pauses, N shifts, H hides, F fullscreen, D demo beat.",
             )
             .font(mono(9.0))
@@ -175,23 +175,66 @@ fn panel(ui: &mut egui::Ui, app: &mut DriftApp, compact: bool) {
     );
 }
 
+/// Draws a small solid triangle pointing left (`dir < 0`) or right.
+fn arrow(p: &egui::Painter, center: egui::Pos2, dir: f32, color: Color32) {
+    let (w, h) = (3.5 * dir, 4.0);
+    p.add(egui::Shape::convex_polygon(
+        vec![
+            egui::pos2(center.x + w, center.y),
+            egui::pos2(center.x - w, center.y - h),
+            egui::pos2(center.x - w, center.y + h),
+        ],
+        color,
+        Stroke::NONE,
+    ));
+}
+
+/// One trait: ◀ LABEL value ▶ (pin). The arrows step through the options; only the
+/// dot on the right pins.
 fn trait_row(ui: &mut egui::Ui, app: &mut DriftApp, i: usize, active: bool) {
-    let (rect, resp) = ui.allocate_exact_size(egui::vec2(WIDTH, 20.0), Sense::click());
+    let (rect, _) = ui.allocate_exact_size(egui::vec2(WIDTH, 20.0), Sense::hover());
     let st = app.traits.state[i].clone();
     let def_label = app.traits.defs[i].label;
     let p = ui.painter_at(rect);
-    if resp.hovered() {
-        p.rect_filled(rect, CornerRadius::same(4), Color32::from_white_alpha(15));
-    }
+    let y = rect.center().y;
+
     let age = (app.sim - app.flashed[i]) as f32;
     if (0.0..1.0).contains(&age) {
         let a = ((1.0 - age) * 46.0) as u8;
         p.rect_filled(rect, CornerRadius::same(4), Color32::from_white_alpha(a));
     }
-    let y = rect.center().y;
+
+    // Hit areas
+    let left = egui::Rect::from_min_size(rect.min, egui::vec2(18.0, rect.height()));
+    let pin = egui::Rect::from_min_size(
+        egui::pos2(rect.right() - 20.0, rect.top()),
+        egui::vec2(20.0, rect.height()),
+    );
+    let right = egui::Rect::from_min_size(
+        egui::pos2(pin.left() - 18.0, rect.top()),
+        egui::vec2(18.0, rect.height()),
+    );
+    let id = ui.id().with(("trait", i));
+    let l_resp = ui.interact(left, id.with("prev"), Sense::click());
+    let r_resp = ui.interact(right, id.with("next"), Sense::click());
+    let p_resp = ui.interact(pin, id.with("pin"), Sense::click());
+
+    for (resp, r) in [(&l_resp, left), (&r_resp, right), (&p_resp, pin)] {
+        if resp.hovered() {
+            p.rect_filled(
+                r.shrink(1.0),
+                CornerRadius::same(4),
+                Color32::from_white_alpha(22),
+            );
+        }
+    }
+    let arrow_color = |hovered: bool| if hovered { Color32::WHITE } else { DIM };
+    arrow(&p, left.center(), -1.0, arrow_color(l_resp.hovered()));
+    arrow(&p, right.center(), 1.0, arrow_color(r_resp.hovered()));
+
     let key_color = if st.locked { INK } else { DIM };
     p.text(
-        egui::pos2(rect.left() + 4.0, y),
+        egui::pos2(left.right() + 2.0, y),
         Align2::LEFT_CENTER,
         def_label.to_uppercase(),
         mono(9.0),
@@ -206,36 +249,51 @@ fn trait_row(ui: &mut egui::Ui, app: &mut DriftApp, i: usize, active: bool) {
     } else {
         INK
     };
-    p.text(
-        egui::pos2(rect.left() + 88.0, y),
+    let value_rect = egui::Rect::from_min_max(
+        egui::pos2(left.right() + 80.0, rect.top()),
+        egui::pos2(right.left() - 2.0, rect.bottom()),
+    );
+    ui.painter_at(value_rect).text(
+        egui::pos2(value_rect.left(), y),
         Align2::LEFT_CENTER,
         desc,
         mono(10.5),
         val_color,
     );
-    let pin = egui::pos2(rect.right() - 8.0, y);
+
+    let dot = pin.center();
     if st.locked {
-        p.circle_filled(pin, 3.5, INK);
+        p.circle_filled(dot, 3.5, INK);
     } else {
-        p.circle_stroke(pin, 3.5, Stroke::new(1.0, DIM));
+        let c = if p_resp.hovered() { INK } else { DIM };
+        p.circle_stroke(dot, 3.5, Stroke::new(1.0, c));
     }
     if st.moving() {
         let prog = app.traits.progress(i, app.sim);
-        let x0 = rect.left() + 4.0;
-        let x1 = x0 + (rect.width() - 8.0) * prog;
+        let x0 = left.right() + 2.0;
+        let x1 = x0 + (right.left() - 2.0 - x0) * prog;
         p.hline(
             x0..=x1,
             rect.bottom() - 1.0,
             Stroke::new(1.0, Color32::WHITE),
         );
     }
-    if resp.clicked() {
+
+    if l_resp.clicked() {
+        app.step_trait(i, -1);
+    }
+    if r_resp.clicked() {
+        app.step_trait(i, 1);
+    }
+    if p_resp.clicked() {
         app.traits.toggle_lock(i);
     }
-    resp.on_hover_text(if st.locked {
+    l_resp.on_hover_text("Previous");
+    r_resp.on_hover_text("Next");
+    p_resp.on_hover_text(if st.locked {
         "Pinned. Click to let it change."
     } else {
-        "Click to pin"
+        "Pin: keep this one"
     });
 }
 
