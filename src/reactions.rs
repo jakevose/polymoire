@@ -9,7 +9,7 @@
 //! - **No flashing.** Brightness may rise at most [`MAX_EXPO`] above normal and changes no
 //!   faster than [`EXPO_SLEW`] per second, well inside photosensitivity guidance.
 
-use crate::analysis::Levels;
+use crate::analysis::{Hits, Levels};
 use crate::dsp::smooth_k;
 use crate::traits::ReactionWeights;
 
@@ -19,8 +19,10 @@ pub const MAX_EXPO: f32 = 1.10;
 pub const EXPO_SLEW: f32 = 0.6;
 /// How long a beat-stepped re-form takes, in seconds.
 pub const MORPH_EASE: f32 = 0.22;
-/// Deepest half-time zoom: the view scales in by at most this fraction.
-pub const MAX_ZOOM: f32 = 0.06;
+/// Typical half-time zoom depth at full intensity.
+pub const ZOOM_BASE: f32 = 0.05;
+/// Deepest half-time zoom ever (heavy, intense music): the view scales in by at most this.
+pub const MAX_ZOOM: f32 = 0.08;
 /// Widest half-time sway, in radians (about 4°), alternating left and right.
 pub const MAX_SWAY: f32 = 0.07;
 
@@ -60,7 +62,7 @@ impl Visual {
         expo: 1.0,
         hue: 0.0,
         spark: 0.0,
-        vig: 0.85,
+        vig: 0.6,
         jelly: 0.0,
         jelly_t: 0.0,
         morph_a: 0.0,
@@ -96,7 +98,9 @@ pub struct Pulse {
     cam: f32,
     sway: f32,
     sway_mid: f32,
-    sway_target: f32,
+    sway_sign: f32,
+    pub snare_env: f32,
+    pub hat_env: f32,
     /// Half-time camera hits so far (diagnostics and tests).
     pub cam_hits: u64,
 }
@@ -123,10 +127,28 @@ impl Default for Pulse {
             cam: 0.0,
             sway: 0.0,
             sway_mid: 0.0,
-            sway_target: MAX_SWAY,
+            sway_sign: 1.0,
+            snare_env: 0.0,
+            hat_env: 0.0,
             cam_hits: 0,
         }
     }
+}
+
+/// What the music is doing beyond the beat (from the analyzer and the vibe).
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct Sound {
+    /// Steady low end, 0..1.
+    pub bass_sustain: f32,
+    /// Overall intensity (loudness and busyness), 0..1.
+    pub intensity: f32,
+    /// How bass-weighted and heavy, 0..1.
+    pub heaviness: f32,
+    /// Polyrhythm and syncopation, 0..1.
+    pub poly: f32,
+    pub syncopation: f32,
+    /// Snare hits per second.
+    pub snare_rate: f32,
 }
 
 /// Everything a frame needs to compute the visual.
@@ -143,6 +165,9 @@ pub struct FrameInput<'a> {
     pub energy: f32,
     /// Beat period in seconds (used to pace the half-time camera).
     pub period: f32,
+    /// Instrument hits landing this frame.
+    pub hits: Hits,
+    pub sound: Sound,
     pub reduced_motion: bool,
 }
 
@@ -178,16 +203,39 @@ impl Pulse {
             self.beats += 1;
             if self.beats % 2 == 1 {
                 self.cam_raw = 1.0;
-                self.sway_target = -self.sway_target;
                 self.cam_hits += 1;
+                if f.sound.snare_rate < 0.3 {
+                    self.sway_sign = -self.sway_sign;
+                }
             }
         }
+        // Each instrument has its own job. Kicks punch; snares shift color and, when there
+        // is a backbeat, set the sway; hats make the motes twinkle.
+        let hits = f.hits;
+        let s = f.sound;
+        if hits.kick > 0.0 {
+            self.kick_raw = self.kick_raw.max(hits.kick);
+        }
+        if hits.snare > 0.0 {
+            self.snare_env = self.snare_env.max(hits.snare);
+            self.hue_acc += 0.02 * hits.snare * (1.0 + s.poly);
+            if s.snare_rate >= 0.3 {
+                self.sway_sign = -self.sway_sign;
+            }
+        }
+        if hits.hat > 0.0 {
+            self.hat_env = self.hat_env.max(hits.hat);
+        }
+        self.snare_env *= (-dt * 6.0).exp();
+        self.hat_env *= (-dt * 10.0).exp();
         let period = f.period.clamp(0.25, 1.5);
         self.cam_raw *= (-dt * 2.0 / period).exp();
         self.cam += (self.cam_raw - self.cam) * smooth_k(12.0, dt);
-        // Two smoothing stages give an ease-in-out rock rather than a jolt.
+        // Two smoothing stages give an ease-in-out rock rather than a jolt. Heavy music
+        // pushes and pulls more than it rocks.
+        let sway_amp = MAX_SWAY * (0.5 + 0.5 * s.intensity) * (1.0 - 0.5 * s.heaviness);
         let k = smooth_k(4.0 / period, dt);
-        self.sway_mid += (self.sway_target - self.sway_mid) * k;
+        self.sway_mid += (self.sway_sign * sway_amp - self.sway_mid) * k;
         self.sway += (self.sway_mid - self.sway) * k;
         self.kick_raw *= (-dt * 5.0).exp();
         self.kick += (self.kick_raw - self.kick) * smooth_k(22.0, dt);
@@ -211,7 +259,8 @@ impl Pulse {
         // without music, Energy sets an ambient step every couple of seconds.
         self.morph_age += dt;
         let music_morph = g * w_mo;
-        if f.beat && music_morph > 0.25 {
+        let syncopated_snare = hits.snare > 0.0 && s.syncopation > 0.35 && self.morph_age > 0.12;
+        if (f.beat || syncopated_snare) && music_morph > 0.25 {
             self.step_morph();
         } else if g < 0.5 && e > 0.4 {
             self.ambient_step += dt;
@@ -223,12 +272,20 @@ impl Pulse {
         let morph_m = crate::traits::ease((self.morph_age / MORPH_EASE).min(1.0));
         let morph_amp = calm * ((e - 0.3).max(0.0) * 0.12 + music_morph * 0.22);
 
+        // Intensity scales how hard the music pushes; bass sustain adds weight.
+        let react = 0.55 + 0.6 * s.intensity;
+        let bass = s.bass_sustain * g;
+        let heav = s.heaviness;
+
         // Local wobble and motes: always some with Energy, more with the music.
-        let jelly = calm * (e * 0.12 + w_je * (kk * 0.22 + mid * 0.08) + w_pu * kk * 0.08);
+        let jelly = calm
+            * (e * 0.12
+                + react * (w_je * (kk * 0.22 + mid * 0.08) + w_pu * kk * 0.08)
+                + bass * 0.18 * (0.5 + heav));
         self.jelly_t += (dt * (0.25 + e * 0.5 + g * (mid * 0.5 + w_je * kk * 0.8)) * calm) as f64;
-        let motes = ((e - 0.3).max(0.0) * 0.55 + w_mt * g * 0.25).min(0.6);
+        let motes = ((e - 0.3).max(0.0) * 0.55 + w_mt * g * 0.25 + g * s.poly * 0.15).min(0.6);
         self.mote_t += (dt * (0.5 + e * 0.7 + w_mt * high * 1.0) * calm) as f64;
-        let mote_size = 2.5 + e * 1.5 + w_mt * high * 2.0;
+        let mote_size = 2.5 + e * 1.5 + w_mt * high * 2.0 + self.hat_env * g * 2.5 * (0.5 + s.poly);
 
         // Brightness: small target, slew-limited so it can never flash.
         let expo_target =
@@ -237,15 +294,16 @@ impl Pulse {
         let max_step = EXPO_SLEW * dt;
         self.expo += (expo_target - self.expo).clamp(-max_step, max_step);
 
+        let depth = (ZOOM_BASE * (0.6 + 0.4 * s.intensity) * (1.0 + 0.6 * heav)).min(MAX_ZOOM);
         Visual {
-            zoom: 1.0 - cam * w_zo.min(1.0) * self.cam * MAX_ZOOM,
+            zoom: 1.0 - cam * w_zo.min(1.0) * self.cam * depth,
             ang_off: cam * w_sp.min(1.0) * self.sway,
-            warp_add: calm * w_br * mid * 0.1,
-            chroma_add: w_sh * high * 0.3,
+            warp_add: calm * (w_br * mid * 0.1 + bass * 0.25 * heav),
+            chroma_add: w_sh * high * 0.3 + g * self.snare_env * 0.2,
             expo: self.expo,
             hue: g * self.hue + w_hu * kk * 0.03 + w_sh * high * 0.015,
-            spark: w_sh * high * 0.06,
-            vig: 0.85 - (w_br + 0.2) * low * 0.25,
+            spark: w_sh * high * 0.06 + g * self.hat_env * 0.03,
+            vig: 0.6 - (w_br + 0.2) * low * 0.2 - bass * 0.12 * heav,
             jelly,
             jelly_t: (self.jelly_t % 10_000.0) as f32,
             morph_a: self.morph_seed - 1.0,
@@ -280,6 +338,7 @@ mod tests {
             level_slow: 0.2,
             bpm: 120.0,
             present: true,
+            ..Default::default()
         }
     }
 
@@ -292,8 +351,43 @@ mod tests {
             weights: &ALL,
             energy,
             period: 0.5,
+            hits: Hits::default(),
+            sound: if live { MUSIC } else { Sound::default() },
             reduced_motion: false,
         }
+    }
+
+    /// A typical lively track.
+    const MUSIC: Sound = Sound {
+        bass_sustain: 0.4,
+        intensity: 0.8,
+        heaviness: 0.3,
+        poly: 0.0,
+        syncopation: 0.2,
+        snare_rate: 0.0,
+    };
+
+    /// Runs `secs` of music where `hit(i)` gives the hits on frame `i`; returns visuals.
+    fn run_with(
+        p: &mut Pulse,
+        secs: f32,
+        sound: Sound,
+        hit: impl Fn(usize) -> Hits,
+    ) -> Vec<Visual> {
+        let l = loud();
+        (0..(secs / DT) as usize)
+            .map(|i| {
+                p.frame(FrameInput {
+                    hits: hit(i),
+                    sound,
+                    ..input(&l, true, i.is_multiple_of(30), 0.5)
+                })
+            })
+            .collect()
+    }
+
+    fn peak(vs: &[Visual], f: impl Fn(&Visual) -> f32) -> f32 {
+        vs.iter().map(f).fold(f32::MIN, f32::max)
     }
 
     /// Runs `secs` of loud music with beats every `period` seconds; returns all visuals.
@@ -302,7 +396,7 @@ mod tests {
         let frames = (secs / DT) as usize;
         let per = (period / DT).round() as usize;
         (0..frames)
-            .map(|i| p.frame(input(&l, true, i % per == 0, energy)))
+            .map(|i| p.frame(input(&l, true, i.is_multiple_of(per), energy)))
             .collect()
     }
 
@@ -469,6 +563,136 @@ mod tests {
             p.frame(input(&quiet, true, false, 0.5));
         }
         assert!(p.gate > 0.3, "should fade, not snap: {}", p.gate);
+    }
+
+    #[test]
+    fn snares_shift_color_without_moving_the_camera() {
+        let none = |_| Hits::default();
+        let snares = |i: usize| Hits {
+            snare: if i % 60 == 30 { 1.0 } else { 0.0 },
+            ..Default::default()
+        };
+        let quiet = run_with(&mut Pulse::default(), 6.0, MUSIC, none);
+        let hit = run_with(&mut Pulse::default(), 6.0, MUSIC, snares);
+        assert!(peak(&hit, |v| v.chroma_add) > peak(&quiet, |v| v.chroma_add) + 0.1);
+        assert!(hit.last().unwrap().hue > quiet.last().unwrap().hue + 0.05);
+        let zq: Vec<f32> = quiet.iter().map(|v| v.zoom).collect();
+        let zh: Vec<f32> = hit.iter().map(|v| v.zoom).collect();
+        assert_eq!(zq, zh, "snares must not drive the zoom");
+    }
+
+    #[test]
+    fn hats_make_the_motes_twinkle() {
+        let none = |_| Hits::default();
+        let hats = |i: usize| Hits {
+            hat: if i.is_multiple_of(8) { 1.0 } else { 0.0 },
+            ..Default::default()
+        };
+        let quiet = run_with(&mut Pulse::default(), 4.0, MUSIC, none);
+        let hit = run_with(&mut Pulse::default(), 4.0, MUSIC, hats);
+        assert!(peak(&hit, |v| v.mote_size) > peak(&quiet, |v| v.mote_size) + 1.0);
+        assert!(peak(&hit, |v| v.spark) > peak(&quiet, |v| v.spark));
+    }
+
+    #[test]
+    fn sustained_bass_adds_weight() {
+        let light = Sound {
+            bass_sustain: 0.0,
+            ..MUSIC
+        };
+        let heavy = Sound {
+            bass_sustain: 0.9,
+            heaviness: 0.9,
+            ..MUSIC
+        };
+        let a = run_with(&mut Pulse::default(), 4.0, light, |_| Hits::default());
+        let b = run_with(&mut Pulse::default(), 4.0, heavy, |_| Hits::default());
+        let (la, lb) = (a.last().unwrap(), b.last().unwrap());
+        assert!(lb.jelly > la.jelly + 0.1, "{} vs {}", lb.jelly, la.jelly);
+        assert!(lb.warp_add > la.warp_add + 0.1);
+        assert!(lb.vig < la.vig);
+    }
+
+    #[test]
+    fn heavy_music_zooms_deeper_but_within_the_limit() {
+        let light = Sound {
+            heaviness: 0.0,
+            ..MUSIC
+        };
+        let heavy = Sound {
+            heaviness: 1.0,
+            intensity: 1.0,
+            ..MUSIC
+        };
+        let a = run_with(&mut Pulse::default(), 4.0, light, |_| Hits::default());
+        let b = run_with(&mut Pulse::default(), 4.0, heavy, |_| Hits::default());
+        let deep_a = a.iter().map(|v| v.zoom).fold(f32::MAX, f32::min);
+        let deep_b = b.iter().map(|v| v.zoom).fold(f32::MAX, f32::min);
+        assert!(deep_b < deep_a - 0.01, "{deep_b} vs {deep_a}");
+        assert!(deep_b >= 1.0 - MAX_ZOOM - 1e-6);
+        // Heavy music rocks less.
+        assert!(peak(&b, |v| v.ang_off.abs()) < peak(&a, |v| v.ang_off.abs()));
+    }
+
+    #[test]
+    fn intensity_scales_the_push() {
+        let soft = Sound {
+            intensity: 0.1,
+            ..MUSIC
+        };
+        let hard = Sound {
+            intensity: 1.0,
+            ..MUSIC
+        };
+        let a = run_with(&mut Pulse::default(), 4.0, soft, |_| Hits::default());
+        let b = run_with(&mut Pulse::default(), 4.0, hard, |_| Hits::default());
+        assert!(peak(&b, |v| v.jelly) > peak(&a, |v| v.jelly) * 1.3);
+    }
+
+    #[test]
+    fn syncopated_snares_also_re_form_the_shapes() {
+        let straight = Sound {
+            syncopation: 0.0,
+            ..MUSIC
+        };
+        let synco = Sound {
+            syncopation: 0.7,
+            ..MUSIC
+        };
+        let offbeat = |i: usize| Hits {
+            snare: if i % 30 == 20 { 1.0 } else { 0.0 },
+            ..Default::default()
+        };
+        let a = run_with(&mut Pulse::default(), 4.0, straight, offbeat);
+        let b = run_with(&mut Pulse::default(), 4.0, synco, offbeat);
+        assert!(b.last().unwrap().morph_b > a.last().unwrap().morph_b + 3.0);
+    }
+
+    #[test]
+    fn hits_never_cause_flashing() {
+        // Every instrument hitting on every frame, at full intensity and heaviness.
+        let all = |_| Hits {
+            kick: 1.0,
+            snare: 1.0,
+            hat: 1.0,
+        };
+        let wild = Sound {
+            bass_sustain: 1.0,
+            intensity: 1.0,
+            heaviness: 1.0,
+            poly: 1.0,
+            syncopation: 1.0,
+            snare_rate: 4.0,
+        };
+        let vs = run_with(&mut Pulse::default(), 8.0, wild, all);
+        let mut prev = 1.0;
+        for v in &vs {
+            assert!(v.expo <= MAX_EXPO + 1e-6);
+            assert!((v.expo - prev).abs() <= EXPO_SLEW * DT + 1e-6);
+            assert!(v.zoom >= 1.0 - MAX_ZOOM - 1e-6);
+            assert!(v.ang_off.abs() <= MAX_SWAY + 1e-6);
+            prev = v.expo;
+        }
     }
 
     #[test]

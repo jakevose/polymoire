@@ -147,7 +147,17 @@ fn panel(ui: &mut egui::Ui, app: &mut DriftApp, compact: bool) {
         };
         ui.label(egui::RichText::new(bpm).font(mono(9.5)).color(DIM));
     });
-    meters(ui, &a.levels, app.pulse.kick, app.pulse.gate);
+    ui.horizontal(|ui| {
+        ui.label(egui::RichText::new("VIBE").font(mono(9.0)).color(DIM));
+        ui.add_space(37.0);
+        let text = if app.pulse.active() {
+            app.vibe.describe()
+        } else {
+            "—".into()
+        };
+        ui.add(egui::Label::new(label(&text)).truncate());
+    });
+    meters(ui, &a.levels, &app.pulse);
     ui.add_space(4.0);
     ui.horizontal_wrapped(|ui| {
         let demo = app.audio.demo_on();
@@ -297,11 +307,17 @@ fn trait_row(ui: &mut egui::Ui, app: &mut DriftApp, i: usize, active: bool) {
     });
 }
 
-fn meters(ui: &mut egui::Ui, l: &driftfield::analysis::Levels, kick: f32, gate: f32) {
+fn meters(
+    ui: &mut egui::Ui,
+    l: &driftfield::analysis::Levels,
+    pulse: &driftfield::reactions::Pulse,
+) {
+    let gate = pulse.gate;
     let (rect, _) = ui.allocate_exact_size(egui::vec2(WIDTH, 24.0), Sense::hover());
     let p = ui.painter_at(rect);
     let bands = [("LOW", l.low), ("MID", l.mid), ("HIGH", l.high)];
-    let w = (WIDTH - 24.0) / 3.0 - 6.0;
+    let dots_w = 66.0;
+    let w = (WIDTH - dots_w) / 3.0 - 6.0;
     for (k, (name, v)) in bands.iter().enumerate() {
         let x = rect.left() + k as f32 * (w + 6.0);
         p.text(
@@ -317,10 +333,26 @@ fn meters(ui: &mut egui::Ui, l: &driftfield::analysis::Levels, kick: f32, gate: 
         fill.set_width(w * (v * gate).clamp(0.0, 1.0));
         p.rect_filled(fill, CornerRadius::same(2), INK);
     }
-    let alpha = ((0.12 + 0.88 * kick.clamp(0.0, 1.0)) * 255.0) as u8;
-    p.circle_filled(
-        egui::pos2(rect.right() - 8.0, rect.top() + 16.0),
-        4.5,
-        Color32::from_white_alpha(alpha),
-    );
+    // One dot per instrument: kick, snare, hats.
+    let hits = [
+        ("K", pulse.kick),
+        ("S", pulse.snare_env),
+        ("H", pulse.hat_env),
+    ];
+    for (k, (name, v)) in hits.iter().enumerate() {
+        let cx = rect.right() - dots_w + 10.0 + k as f32 * 22.0;
+        p.text(
+            egui::pos2(cx, rect.top() + 6.0),
+            Align2::CENTER_CENTER,
+            *name,
+            mono(8.0),
+            DIM,
+        );
+        let alpha = ((0.12 + 0.88 * (v * gate).clamp(0.0, 1.0)) * 255.0) as u8;
+        p.circle_filled(
+            egui::pos2(cx, rect.top() + 16.0),
+            4.0,
+            Color32::from_white_alpha(alpha),
+        );
+    }
 }

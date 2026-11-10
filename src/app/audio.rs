@@ -2,7 +2,7 @@
 
 use super::capture::{self, Capture};
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
-use driftfield::analysis::{Analyzer, Levels};
+use driftfield::analysis::{Analyzer, Hits, Levels, Rhythm};
 use driftfield::demo::DemoSynth;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
@@ -57,6 +57,11 @@ pub struct AudioFrame {
     pub period: f64,
     /// Audio is arriving from the selected source.
     pub live: bool,
+    /// Instrument hits landing this frame.
+    pub hits: Hits,
+    pub rhythm: Rhythm,
+    /// Hits detected so far: [kick, snare, hats] (diagnostics).
+    pub hit_counts: [u64; 3],
 }
 
 pub struct AudioEngine {
@@ -156,7 +161,10 @@ impl AudioEngine {
         match f.heard_now() {
             Some(heard) => AudioFrame {
                 beat: f.analyzer.poll_beat(heard),
+                hits: f.analyzer.poll_hits(heard),
                 levels: f.analyzer.levels(),
+                rhythm: f.analyzer.rhythm(),
+                hit_counts: f.analyzer.hit_counts(),
                 period: f.analyzer.period(),
                 live: true,
             },

@@ -54,3 +54,29 @@ fn works_with_typical_audio_buffer_sizes() {
         assert!((bpm - BPM).abs() < 2.0, "block {block}: {bpm} bpm");
     }
 }
+
+#[test]
+fn demo_triplet_bars_read_as_polyrhythm() {
+    // Bars are 2 s: bars 1–4 (0–8 s) are straight, bars 5–6 (8–12 s) put triplet hats
+    // over the straight kick.
+    let mut synth = DemoSynth::new(SR);
+    let mut a = Analyzer::new(SR);
+    let mut buf = vec![0.0; 800];
+    let mut at = |secs: f32, a: &mut Analyzer| {
+        while a.time() < secs as f64 {
+            synth.render(&mut buf);
+            a.push(&buf);
+        }
+        a.rhythm()
+    };
+    let straight = at(8.0, &mut a);
+    let poly = at(12.0, &mut a);
+    assert!(straight.poly < 0.3, "straight bars: {straight:?}");
+    assert!(poly.poly > 0.5, "triplet bars: {poly:?}");
+    assert!(poly.triplet > straight.triplet + 0.3);
+    let [kick, snare, hat] = a.hit_counts();
+    assert!(
+        kick > 15 && snare > 4 && hat > 30,
+        "kick {kick} snare {snare} hat {hat}"
+    );
+}

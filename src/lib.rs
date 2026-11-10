@@ -14,6 +14,7 @@ pub mod reactions;
 pub mod rng;
 pub mod traits;
 pub mod uniforms;
+pub mod vibe;
 
 /// The WGSL source for the scene and blit passes.
 pub const SHADER_WGSL: &str = include_str!("shader.wgsl");

@@ -159,7 +159,7 @@ fn pat(id: i32, p: vec2f) -> f32 {
     if (id == 5) { // F5 Spiral
         let r = length(p);
         let a = atan2(p.y, p.x);
-        return 0.5 + 0.5 * sin(a * 3.0 + log(r + 0.001) * 4.0 - t * 0.45);
+        return 0.5 + 0.5 * sin(a * 3.0 + log(r + 0.001) * 4.0 - t * 0.45 + fbm(p * 1.5 + t * 0.1) * 2.0);
     }
     if (id == 6) { // F6 Quasicrystal: five plane waves at 36° steps
         var s = 0.0;
@@ -195,7 +195,8 @@ fn pat(id: i32, p: vec2f) -> f32 {
             f.x = -f.x;
         }
         let d = min(abs(length(f - vec2f(0.5)) - 0.5), abs(length(f + vec2f(0.5)) - 0.5));
-        return smoothstep(0.0, 0.12 + 0.05 * sin(t + h * TAU), d) * 0.8 + 0.2 * fbm(p + t * 0.1);
+        let arcs = smoothstep(0.0, 0.12 + 0.05 * sin(t + h * TAU), d);
+        return mix(arcs, fbm(p * 2.0 + t * 0.1), 0.4) * 0.9 + h * 0.1;
     }
     if (id == 10) { // F10 Honeycomb
         let q = p * 1.2;
@@ -243,7 +244,7 @@ fn fx(id: i32, c: vec3f, x: f32) -> vec3f {
         let f = fract(x * k);
         let q = pal(floor(x * k) / k + 0.5 / k);
         let e = smoothstep(0.0, 0.07, f) * (1.0 - smoothstep(0.93, 1.0, f));
-        return q * (0.3 + 0.7 * e);
+        return q * (0.6 + 0.55 * e);
     }
     if (id == 2) { // E2 Solarize
         return 0.5 + 0.5 * cos(TAU * (c * 1.4 + vec3f(0.0, 0.12, 0.27) + u.clock * 0.015));
@@ -264,25 +265,26 @@ fn fx(id: i32, c: vec3f, x: f32) -> vec3f {
     }
     if (id == 7) { // E7 Neon: glowing isolines on a dark ground
         let f = abs(fract(x * 6.0) - 0.5) * 2.0;
-        let glow = pow(1.0 - f, 6.0);
-        return c * 0.22 + pal(x + 0.3) * glow * 1.2;
+        let glow = pow(1.0 - f, 4.0);
+        return c * 0.6 + pal(x + 0.3) * glow * 1.1;
     }
     if (id == 8) { // E8 Thermal
         let l = clamp(lum(c), 0.0, 1.0);
         let heat = vec3f(l * 3.0, l * 3.0 - 1.0, l * 3.0 - 2.0);
-        return clamp(heat + vec3f(0.0, 0.0, 0.45) * max(1.0 - l * 2.5, 0.0), vec3f(0.0), vec3f(1.0));
+        let hot = clamp(heat + vec3f(0.1, 0.0, 0.5) * max(1.0 - l * 2.5, 0.0), vec3f(0.0), vec3f(1.0));
+        return mix(hot, c, 0.25);
     }
     if (id == 9) { // E9 Chrome
         let s = 0.5 + 0.5 * cos(x * 14.0);
         let metal = mix(vec3f(0.08, 0.09, 0.11), vec3f(0.92, 0.94, 0.97), pow(s, 1.5));
-        return metal * mix(vec3f(1.0), pal(x), 0.25);
+        return metal * mix(vec3f(1.0), pal(x) * 1.2, 0.6);
     }
     if (id == 10) { // E10 Iridescent
         return 0.5 + 0.5 * cos(TAU * (x * 2.0 + vec3f(0.0, 0.33, 0.67) + lum(c) * 0.5));
     }
     if (id == 11) { // E11 Ink
         let ink = smoothstep(0.35, 0.55, lum(c));
-        return mix(vec3f(0.06, 0.06, 0.08), vec3f(0.94, 0.92, 0.86), ink) + (pal(x) - 0.5) * 0.08;
+        return mix(pal(0.1) * 0.45, pal(0.65) * 0.4 + 0.55, ink);
     }
     return c;
 }
@@ -297,7 +299,7 @@ fn tex(id: i32, c: vec3f, fc: vec2f) -> vec3f {
         let g = fract(r * fc / 7.0) - 0.5;
         let rad = sqrt(clamp(lum(c), 0.0, 1.0)) * 0.66;
         let d = 1.0 - smoothstep(rad - 0.12, rad, length(g));
-        return mix(c * 0.1, c * 1.2, d);
+        return mix(c * 0.4, c * 1.2, d);
     }
     if (id == 3) { // T3 Scanline
         let sl = 0.66 + 0.34 * sin(fc.y * 1.5708);
@@ -329,7 +331,7 @@ fn tex(id: i32, c: vec3f, fc: vec2f) -> vec3f {
     }
     if (id == 7) { // T7 Stipple: dot density follows brightness
         let r = h21(floor(fc / 3.0) + 0.37);
-        return select(c * 0.25, c * 1.1, r < lum(c) * 1.1);
+        return select(c * 0.55, c * 1.15, r < lum(c) * 1.1);
     }
     if (id == 8) { // T8 Weave
         let g = fc / 6.0;
@@ -348,7 +350,7 @@ fn tex(id: i32, c: vec3f, fc: vec2f) -> vec3f {
         } else if (col < 1.5) {
             m = vec3f(0.25, 1.0, 0.25);
         }
-        return c * m * 1.6 * step(0.15, g.y);
+        return c * m * 1.6 * mix(0.45, 1.0, step(0.15, g.y));
     }
     if (id == 10) { // T10 Riso: two inks on cream stock, with grain
         let l = lum(c);
@@ -362,7 +364,7 @@ fn tex(id: i32, c: vec3f, fc: vec2f) -> vec3f {
         let l = clamp(lum(c), 0.0, 1.0);
         let d = abs(fract((fc.x + fc.y) * 0.7071 / 5.0) - 0.5) * 2.0;
         let ink = 1.0 - smoothstep(1.0 - l - 0.1, 1.0 - l + 0.1, d);
-        return mix(c * 1.15, c * 0.15, ink * 0.9);
+        return mix(c * 1.15, c * 0.35, ink * 0.75);
     }
     return c;
 }
@@ -386,6 +388,13 @@ fn motes(c: vec3f, fc: vec2f) -> vec3f {
     let a = 1.0 - smoothstep(r * 0.3, r, d);
     let mc = pal(h.x * 0.7 + 0.3);
     return mix(c, max(c, mc * 1.05), a * 0.85);
+}
+
+// Lifts saturation and gives the darkest areas palette color instead of black.
+fn vibrant(c: vec3f, x: f32) -> vec3f {
+    let l = lum(c);
+    let v = mix(vec3f(l), c, 1.3);
+    return max(v, pal(x + 0.5) * 0.14 + 0.05);
 }
 
 @fragment
@@ -418,19 +427,24 @@ fn fs_scene(@builtin(position) pos: vec4f) -> @location(0) vec4f {
         let db = local_disp(p * 0.7, vec2f(u.morph_b * 17.3, u.morph_b * 3.1));
         p = p + mix(da, db, u.morph_m) * u.morph_amp;
     }
-    let x = field(p);
+    // A fine detail layer keeps every field textured, even the sparse ones.
+    let detail = fbm(p * 3.1 + vec2f(u.t * 0.25, -u.t * 0.18)) - 0.5;
+    let x = field(p) + detail * 0.14;
     var col: vec3f;
     if (u.chroma > 0.001) {
         let o = normalize(uv + vec2f(1e-4)) * u.chroma * 0.09;
-        col = vec3f(pal(field(p + o)).r, pal(x).g, pal(field(p - o)).b);
+        col = vec3f(pal(field(p + o) + detail * 0.14).r, pal(x).g, pal(field(p - o) + detail * 0.14).b);
     } else {
         col = pal(x);
     }
+    // A second, slower hue woven through, so no look is ever one flat color.
+    let n2 = fbm(p * 0.6 + vec2f(7.3, 1.9) + u.t * 0.05);
+    col = mix(col, pal(x * 1.6 + n2 + 0.33), 0.22);
     var c1 = fx(i32(u.fx_a + 0.5), col, x);
     if (u.fx_m > 0.001) {
         c1 = mix(c1, fx(i32(u.fx_b + 0.5), col, x), u.fx_m);
     }
-    c1 = c1 * u.expo;
+    c1 = vibrant(c1, x) * u.expo;
     let vu = fc / res - 0.5;
     c1 = c1 * (1.0 - dot(vu, vu) * u.vig);
     var t1 = tex(i32(u.tex_a + 0.5), c1, fc);

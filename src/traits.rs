@@ -110,15 +110,15 @@ pub fn catalog() -> Vec<TraitDef> {
                 ),
                 pal(
                     "Abyss",
-                    [0.2, 0.3, 0.45],
-                    [0.25, 0.3, 0.35],
+                    [0.3, 0.4, 0.55],
+                    [0.3, 0.35, 0.4],
                     one,
                     [0.6, 0.55, 0.5],
                 ),
                 pal(
                     "Nocturne",
-                    [0.3, 0.18, 0.38],
-                    [0.4, 0.25, 0.4],
+                    [0.4, 0.26, 0.5],
+                    [0.45, 0.3, 0.45],
                     one,
                     [0.85, 0.1, 0.3],
                 ),
@@ -150,7 +150,13 @@ pub fn catalog() -> Vec<TraitDef> {
                     [1.0, 0.8, 0.6],
                     [0.0, 0.15, 0.35],
                 ),
-                pal("Mono", h, h, one, [0.0, 0.0, 0.0]),
+                pal(
+                    "Opal",
+                    [0.6, 0.6, 0.65],
+                    [0.4, 0.4, 0.35],
+                    one,
+                    [0.0, 0.2, 0.45],
+                ),
                 pal(
                     "Vapor",
                     [0.6, 0.5, 0.75],
@@ -160,10 +166,10 @@ pub fn catalog() -> Vec<TraitDef> {
                 ),
                 pal(
                     "Copper",
-                    [0.5, 0.35, 0.25],
-                    [0.45, 0.3, 0.2],
+                    [0.55, 0.4, 0.3],
+                    [0.45, 0.32, 0.25],
                     one,
-                    [0.0, 0.05, 0.1],
+                    [0.0, 0.08, 0.15],
                 ),
                 pal(
                     "Ultraviolet",
@@ -262,7 +268,7 @@ pub fn catalog() -> Vec<TraitDef> {
             key: Key::Energy,
             label: "Energy",
             opts: vec![
-                sc("Calm", 0.2),
+                sc("Calm", 0.35),
                 sc("Lively", 0.55),
                 scw("Restless", 0.8, 0.8),
                 scw("Electric", 1.0, 0.4),
@@ -312,7 +318,7 @@ pub fn catalog() -> Vec<TraitDef> {
             key: Key::Scale,
             label: "Scale",
             opts: vec![
-                scw("Vast", 1.1, 0.6),
+                scw("Vast", 1.4, 0.6),
                 sc("Wide", 1.6),
                 sc("Mid", 3.0),
                 sc("Close", 4.8),
@@ -356,7 +362,7 @@ pub fn catalog() -> Vec<TraitDef> {
                 scw("Off", 1.0, 4.0),
                 scw("Tiny", 2.5, 0.6),
                 sc("Fine", 4.0),
-                scw("Coarse", 8.0, 0.6),
+                scw("Coarse", 6.0, 0.6),
             ],
         },
     ]
@@ -364,11 +370,21 @@ pub fn catalog() -> Vec<TraitDef> {
 
 /// Weighted pick, never returning `exclude`.
 pub fn pick_weighted(opts: &[Opt], exclude: Option<usize>, rng: &mut Rng) -> usize {
+    pick_weighted_by(opts, exclude, rng, &|_| 1.0)
+}
+
+/// Weighted pick with each option's weight multiplied by `bias` (e.g. the vibe).
+pub fn pick_weighted_by(
+    opts: &[Opt],
+    exclude: Option<usize>,
+    rng: &mut Rng,
+    bias: &dyn Fn(&Opt) -> f32,
+) -> usize {
     let weight = |i: usize| {
         if Some(i) == exclude {
             0.0
         } else {
-            opts[i].weight.max(0.0)
+            (opts[i].weight * bias(&opts[i])).max(0.0)
         }
     };
     let total: f32 = (0..opts.len()).map(weight).sum();
@@ -558,6 +574,19 @@ impl Traits {
         audio_active: bool,
         reduced_motion: bool,
     ) -> Vec<usize> {
+        self.shift_with(sim, n, dur, audio_active, reduced_motion, &|_, _| 1.0)
+    }
+
+    /// Like [`Traits::shift`], with picks weighted by `bias(trait, option name)`.
+    pub fn shift_with(
+        &mut self,
+        sim: f64,
+        n: Option<usize>,
+        dur: Option<f64>,
+        audio_active: bool,
+        reduced_motion: bool,
+        bias: &dyn Fn(Key, &str) -> f32,
+    ) -> Vec<usize> {
         let mut free: Vec<(usize, f64)> = (0..self.state.len())
             .filter(|&i| {
                 let s = &self.state[i];
@@ -569,7 +598,13 @@ impl Traits {
         let n = n.unwrap_or_else(|| if self.rng.chance(0.55) { 1 } else { 2 });
         let mut changed = Vec::new();
         for &(i, _) in free.iter().take(n) {
-            let to = pick_weighted(&self.defs[i].opts, Some(self.state[i].from), &mut self.rng);
+            let key = self.defs[i].key;
+            let to = pick_weighted_by(
+                &self.defs[i].opts,
+                Some(self.state[i].from),
+                &mut self.rng,
+                &|o: &Opt| bias(key, o.name),
+            );
             let base = dur.unwrap_or_else(|| self.rng.range(2.5, 5.0) as f64);
             let s = &mut self.state[i];
             s.to = to;
@@ -779,6 +814,32 @@ mod tests {
             t.step_option(i, 1, k as f64 * 0.1, 1.2);
         }
         assert_eq!(t.state[i].to, 5);
+    }
+
+    #[test]
+    fn bias_steers_what_gets_picked() {
+        let mut t = traits();
+        let i = t.index_of(Key::Palette);
+        let mut abyss = 0;
+        for round in 0..400 {
+            let sim = round as f64 * 10.0;
+            // Only the palette is free to move.
+            for (k, s) in t.state.iter_mut().enumerate() {
+                s.locked = k != i;
+            }
+            let picked = t.shift_with(sim, Some(1), Some(1.0), true, false, &|key, name| {
+                if key == Key::Palette && name == "Abyss" {
+                    20.0
+                } else {
+                    1.0
+                }
+            });
+            if picked == vec![i] && t.defs[i].opts[t.state[i].to].name == "Abyss" {
+                abyss += 1;
+            }
+            t.settle(sim + 5.0);
+        }
+        assert!(abyss > 100, "Abyss picked {abyss}/400 times");
     }
 
     #[test]

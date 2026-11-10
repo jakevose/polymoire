@@ -7,10 +7,11 @@ mod render;
 
 use audio::{AudioEngine, AudioFrame};
 use driftfield::quality::Quality;
-use driftfield::reactions::{is_drop, FrameInput, Pulse, Visual};
+use driftfield::reactions::{is_drop, FrameInput, Pulse, Sound, Visual};
 use driftfield::rng::Rng;
 use driftfield::traits::{Key, Traits};
 use driftfield::uniforms::Uniforms;
+use driftfield::vibe::{self, Vibe};
 use eframe::egui;
 use eframe::egui_wgpu;
 use std::time::Instant;
@@ -43,6 +44,7 @@ pub struct DriftApp {
     next_at: f64,
     beats_to_shift: u32,
     last_drop: f64,
+    pub vibe: Vibe,
     last_frame: Instant,
     /// Sim time each trait last started changing, for the HUD flash.
     flashed: Vec<f64>,
@@ -106,6 +108,7 @@ impl DriftApp {
             next_at: 3.0,
             beats_to_shift: 8,
             last_drop: -99.0,
+            vibe: Vibe::default(),
             last_frame: Instant::now(),
             flashed: vec![-99.0; n],
             paused: false,
@@ -157,6 +160,18 @@ impl DriftApp {
             let (n, peak, sr) = self.audio.system_stats();
             println!("system_samples: {n} at {sr} Hz, loudest_rms: {peak:.4}");
             println!("bpm: {:.1}", levels.bpm);
+            println!("vibe: {}", self.vibe.describe());
+            println!(
+                "intensity: {:.2}, heaviness: {:.2}, bass_sustain: {:.2}",
+                self.vibe.intensity, self.vibe.heaviness, levels.bass_sustain
+            );
+            let r = self.last_audio.rhythm;
+            println!(
+                "rhythm: density {:.1}/s, syncopation {:.2}, triplet {:.2}, dotted {:.2}, poly {:.2}",
+                r.density, r.syncopation, r.triplet, r.dotted, r.poly
+            );
+            let [k, sn, h] = self.last_audio.hit_counts;
+            println!("hits: kick {k}, snare {sn}, hats {h}");
             println!("beats_seen: {}", s.beats);
             println!("gate: {:.2}", self.pulse.gate);
             println!("trait_shifts: {}", s.shifts);
@@ -178,9 +193,22 @@ impl DriftApp {
 
     fn shift(&mut self, n: Option<usize>, dur: Option<f64>) {
         let active = self.pulse.active();
-        let changed = self
-            .traits
-            .shift(self.sim, n, dur, active, self.reduced_motion);
+        // While music drives the picture, its vibe steers what gets picked.
+        let (mood, poly, triplet) = (self.vibe.mood, self.vibe.poly, self.vibe.triplet);
+        let changed = self.traits.shift_with(
+            self.sim,
+            n,
+            dur,
+            active,
+            self.reduced_motion,
+            &|key, name| {
+                if active {
+                    vibe::bias(mood, poly, triplet, key, name)
+                } else {
+                    1.0
+                }
+            },
+        );
         for i in changed {
             self.flashed[i] = self.sim;
             if let Some(s) = self.smoke.as_mut() {
@@ -210,7 +238,20 @@ impl DriftApp {
         self.quality.frame(dt as f32);
         let a = self.audio.frame();
         let weights = self.traits.reaction(self.sim);
-        let energy = self.traits.scalar(Key::Energy, self.sim);
+        let feats = self.vibe.features(dt as f32, &a.levels, &a.rhythm, a.live);
+        let mood_changed = self.vibe.update(dt as f32, &feats, &a.rhythm);
+        // The music's intensity lifts the Energy trait; it never lowers it.
+        let trait_energy = self.traits.scalar(Key::Energy, self.sim);
+        let energy =
+            trait_energy + (self.vibe.intensity - trait_energy).max(0.0) * self.pulse.gate * 0.7;
+        let sound = Sound {
+            bass_sustain: a.levels.bass_sustain,
+            intensity: self.vibe.intensity,
+            heaviness: self.vibe.heaviness,
+            poly: self.vibe.poly,
+            syncopation: self.vibe.syncopation,
+            snare_rate: a.rhythm.snare_rate,
+        };
         self.visual = self.pulse.frame(FrameInput {
             // Pausing freezes the picture, including its local motion.
             dt: if self.paused { 0.0 } else { dt as f32 },
@@ -220,6 +261,12 @@ impl DriftApp {
             weights: &weights,
             energy,
             period: a.period as f32,
+            hits: if self.paused {
+                Default::default()
+            } else {
+                a.hits
+            },
+            sound,
             reduced_motion: self.reduced_motion,
         });
         let active = self.pulse.active();
@@ -241,7 +288,8 @@ impl DriftApp {
                         self.beats_to_shift = self.traits.beats_until_next();
                     }
                 }
-                if is_drop(&a.levels) && self.sim - self.last_drop > 8.0 {
+                // A drop or a change of mood brings a bigger scene change.
+                if (is_drop(&a.levels) || mood_changed) && self.sim - self.last_drop > 8.0 {
                     self.last_drop = self.sim;
                     self.shift(Some(2), Some(a.period * 4.0));
                 }

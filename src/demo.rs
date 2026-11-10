@@ -1,5 +1,6 @@
-//! The demo beat: a small synthesized house loop at 120 bpm (Am–F–C–G), with a two-bar
-//! breakdown at the end of every 8-bar phrase. Rendered sample by sample, mono.
+//! The demo beat: a small synthesized house loop at 120 bpm (Am–F–C–G). Each 8-bar phrase
+//! has four straight bars, two bars of triplet hats over the straight kick (a 3-against-4
+//! polyrhythm), and a two-bar breakdown. Rendered sample by sample, mono.
 
 use crate::dsp::{Biquad, FilterKind};
 use crate::rng::Rng;
@@ -72,6 +73,7 @@ pub struct DemoSynth {
     sr: f32,
     samples_per_step: f64,
     next_step_at: f64,
+    next_triplet_at: f64,
     sample: u64,
     step: u64,
     voices: Vec<Voice>,
@@ -84,6 +86,7 @@ impl DemoSynth {
             sr: sample_rate,
             samples_per_step: sample_rate as f64 * 60.0 / (BPM * STEPS_PER_BEAT) as f64,
             next_step_at: 0.0,
+            next_triplet_at: 0.0,
             sample: 0,
             step: 0,
             voices: Vec::with_capacity(64),
@@ -98,6 +101,14 @@ impl DemoSynth {
                 self.trigger(self.step);
                 self.step += 1;
                 self.next_step_at += self.samples_per_step;
+            }
+            // Triplet hats: three per beat, only in the polyrhythm bars.
+            while self.sample as f64 >= self.next_triplet_at {
+                let bar = (self.sample as f64 / (self.samples_per_step * 16.0)) as u64;
+                if Self::triplet_bar(bar) {
+                    self.noise_hit(FilterKind::HighPass, 7500.0, 0.12, 0.04);
+                }
+                self.next_triplet_at += self.samples_per_step * STEPS_PER_BEAT as f64 / 3.0;
             }
             *o = self.tick();
             self.sample += 1;
@@ -163,6 +174,9 @@ impl DemoSynth {
         } else if phrase == 7 && i >= 8 && i.is_multiple_of(2) {
             self.snare();
         }
+        if Self::triplet_bar(bar) {
+            return;
+        }
         let hat = if breakdown { 0.06 } else { 0.12 };
         if i % 2 == 1 {
             self.noise_hit(FilterKind::HighPass, 7500.0, hat, 0.035);
@@ -170,6 +184,11 @@ impl DemoSynth {
         if i % 4 == 2 {
             self.noise_hit(FilterKind::HighPass, 6500.0, hat * 0.85, 0.16);
         }
+    }
+
+    /// Bars 5–6 of each 8-bar phrase play triplet hats.
+    fn triplet_bar(bar: u64) -> bool {
+        matches!(bar % 8, 4 | 5)
     }
 
     fn snare(&mut self) {
