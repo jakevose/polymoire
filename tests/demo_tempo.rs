@@ -80,3 +80,44 @@ fn demo_triplet_bars_read_as_polyrhythm() {
         "kick {kick} snare {snare} hat {hat}"
     );
 }
+
+/// Kick times the analyzer reports for 40 s of the demo, with `master` applied to each
+/// sample, against the true kicks: every beat except in each phrase's 2-bar breakdown.
+fn kicks_found(master: impl Fn(f32) -> f32) -> (usize, usize, usize) {
+    let mut synth = DemoSynth::new(SR);
+    let mut a = Analyzer::new(SR);
+    let mut buf = vec![0.0; 800];
+    let mut found = Vec::new();
+    for _ in 0..(40 * 60) {
+        synth.render(&mut buf);
+        buf.iter_mut().for_each(|x| *x = master(*x));
+        a.push(&buf);
+        if a.poll_hits(a.time()).kick > 0.0 {
+            found.push(a.time());
+        }
+    }
+    let truth: Vec<f64> = (0..80)
+        .map(|k| k as f64 * 0.5)
+        .filter(|t| ((t / 2.0) as u64 % 8) < 6)
+        .collect();
+    // Hits are polled once per 800-sample frame, so a match may trail by up to ~30 ms.
+    let real = |t: f64| truth.iter().any(|&k| (-0.01..0.05).contains(&(t - k)));
+    let matched = found.iter().filter(|&&t| real(t)).count();
+    (truth.len(), matched, found.len() - matched)
+}
+
+#[test]
+fn every_demo_kick_is_found_with_no_extras() {
+    let (truth, matched, extra) = kicks_found(|x| x);
+    assert_eq!((matched, extra), (truth, 0));
+}
+
+#[test]
+fn bass_notes_on_a_loud_master_are_not_kicks() {
+    // +12 dB into a soft clipper: the bass line ends up nearly as loud as the kick, the way
+    // it does on heavily compressed commercial masters. Before kicks were judged against the
+    // track's own kicks and the beat grid, this found 61 extra "kicks" and lost 16 real ones.
+    let (truth, matched, extra) = kicks_found(|x| (x * 4.0).tanh() * 0.9);
+    assert_eq!(matched, truth, "missed real kicks");
+    assert!(extra <= 2, "{extra} bass notes or snares counted as kicks");
+}

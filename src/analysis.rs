@@ -17,6 +17,18 @@ pub const HOP: usize = 256;
 pub const PRESENCE_RMS: f32 = 0.002;
 /// Time constant for rhythm statistics, seconds: how far back "the feel" looks.
 pub const RHYTHM_TAU: f32 = 4.0;
+/// How long the reference kick strength takes to fade, seconds (see `Analyzer::kick_ref`).
+const KICK_REF_TAU: f32 = 8.0;
+/// A kick candidate this close to a beat (as a share of the period) counts as on the grid.
+const KICK_GRID_TOL: f64 = 0.12;
+/// How strong a kick candidate must be, against the track's recent kicks, to count: on
+/// the beat grid (or before the tempo is known), and off it.
+const KICK_ON_GRID: f32 = 0.7;
+const KICK_OFF_GRID: f32 = 0.85;
+/// Hops a kick candidate is watched for its peak before it is judged (~16 ms at 48 kHz).
+const KICK_CONFIRM_HOPS: u8 = 3;
+/// After a rejected kick candidate, how long before the detector may try again, seconds.
+const KICK_RETRY: f64 = 0.06;
 
 const KICK: usize = 0;
 const SNARE: usize = 1;
@@ -208,6 +220,11 @@ pub struct Analyzer {
     band_slow: [f32; 3],
     // onsets
     det: [Onset; 3],
+    /// Strength of the track's recent kicks, fading over [`KICK_REF_TAU`]. Bass-line notes
+    /// on loud, compressed masters rise almost as sharply as kicks but are weaker than them.
+    kick_ref: f32,
+    /// A low-band onset being watched: (onset time, highest energy so far, hops left).
+    kick_cand: Option<(f64, f32, u8)>,
     onsets: u64,
     band_onsets: [u64; 3],
     stats: [BandStats; 3],
@@ -238,6 +255,8 @@ impl Analyzer {
             level_slow: 0.0,
             low_slow: 0.0,
             band_slow: [0.0; 3],
+            kick_ref: 0.0,
+            kick_cand: None,
             det: [
                 Onset::new(0.25, 1.3, 0.45, 0.1, 1.6),  // kick
                 Onset::new(0.10, 1.4, 0.35, 0.12, 1.5), // snare
@@ -338,8 +357,15 @@ impl Analyzer {
         self.lw = (self.lw + 1) & 3;
         let low_env = (self.low_win.iter().sum::<f32>() / 4.0).sqrt();
         let energies = [low_env, rms[4], rms[5]];
+        self.kick_ref *= (-h / KICK_REF_TAU).exp();
         for (band, &en) in energies.iter().enumerate() {
             if let Some(strength) = self.det[band].feed(en, t, h) {
+                if band == KICK {
+                    // Judge it once it has peaked: a kick's low end keeps climbing for a few
+                    // milliseconds, a bass note's tops out lower.
+                    self.kick_cand = Some((t, en, KICK_CONFIRM_HOPS));
+                    continue;
+                }
                 // A kick's click spills into the snare band. While a kick is sounding, only
                 // a hit near the snare's usual strength counts as a snare.
                 if band == SNARE && low_env > en && strength < 0.75 {
@@ -351,6 +377,23 @@ impl Analyzer {
                     continue;
                 }
                 self.on_hit(band, t, strength);
+            }
+        }
+        if let Some((t0, top, left)) = self.kick_cand {
+            let top = top.max(low_env);
+            if left > 1 {
+                self.kick_cand = Some((t0, top, left - 1));
+            } else {
+                self.kick_cand = None;
+                let strength = (top / self.det[KICK].peak).clamp(0.05, 1.0);
+                if self.is_kick(t0, strength) {
+                    self.kick_ref = self.kick_ref.max(strength);
+                    self.on_hit(KICK, t0, strength);
+                } else {
+                    // Not a kick (likely a bass note). Don't let it hold off a real kick
+                    // that follows shortly.
+                    self.det[KICK].last = t0 - self.det[KICK].refractory + KICK_RETRY;
+                }
             }
         }
 
@@ -369,6 +412,24 @@ impl Analyzer {
             rise[KICK] + 0.3 * rise[SNARE],
             t + h as f64 * 0.5,
         );
+    }
+
+    /// Whether a low-band onset is a kick rather than a bass note or a snare's body. Kicks
+    /// are the strongest low onsets in the track; away from the beat grid, or together with
+    /// a snare, a candidate must come close to them (a syncopated kick does, a bass note
+    /// doesn't).
+    fn is_kick(&self, t: f64, strength: f32) -> bool {
+        let with_snare = (t - self.det[SNARE].last).abs() < 0.06;
+        let on_grid = !with_snare
+            && (!self.tempo.locked || {
+                let phase = ((t - self.tempo.anchor) / self.tempo.period).rem_euclid(1.0);
+                phase < KICK_GRID_TOL || phase > 1.0 - KICK_GRID_TOL
+            });
+        let need = if on_grid { KICK_ON_GRID } else { KICK_OFF_GRID };
+        // A snare's body reaches into the low band; with no kicks around (a breakdown roll)
+        // the reference fades, so also require it to be near the loudest low end itself.
+        let floor = if with_snare { KICK_OFF_GRID } else { 0.0 };
+        strength >= (self.kick_ref * need).max(floor)
     }
 
     fn on_hit(&mut self, band: usize, t: f64, strength: f32) {

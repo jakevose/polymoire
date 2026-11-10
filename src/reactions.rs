@@ -26,6 +26,17 @@ pub const MAX_ZOOM: f32 = 0.08;
 /// Widest half-time sway, in radians (about 4°), alternating left and right.
 pub const MAX_SWAY: f32 = 0.07;
 
+/// Fastest the music can push the flow clock, in clock units per second, on top of the
+/// Tempo trait (0.08..0.5). Each kick nudges the patterns forward by roughly
+/// `MAX_SURGE * THUMP_DECAY * period`, then they coast: motion inside the picture, never
+/// the camera.
+pub const MAX_SURGE: f32 = 3.0;
+/// The thump's fade, as a share of the beat (its time constant): a quick swell on the kick
+/// that is gone well before the next one, so each beat reads as its own pulse.
+pub const THUMP_DECAY: f32 = 0.3;
+/// How fast the thump swells toward a new kick, per second (about 30 ms): rounded, not a jolt.
+pub const THUMP_ATTACK: f32 = 35.0;
+
 /// Effect gain at silence-adjacent levels and at the loudest peaks. See [`loudness_gain`].
 pub const MIN_GAIN: f32 = 0.3;
 pub const MAX_GAIN: f32 = 1.25;
@@ -99,6 +110,13 @@ pub struct Pulse {
     hue_acc: f32,
     hue: f32,
     pub flow_boost: f32,
+    /// How hard the music is pushing the flow clock right now, 0..[`MAX_SURGE`].
+    pub surge: f32,
+    /// The kick pulse, 0..1: set by each detected kick, fading over [`THUMP_DECAY`] beats.
+    /// It drives the surge, warp and wobble. Only real kicks set it, not hats, stabs or
+    /// bass notes, and not the predicted beat grid, so breakdowns stay still.
+    pub thump: f32,
+    thump_raw: f32,
     expo: f32,
     jelly_t: f64,
     mote_t: f64,
@@ -128,6 +146,9 @@ impl Default for Pulse {
             hue_acc: 0.0,
             hue: 0.0,
             flow_boost: 0.0,
+            surge: 0.0,
+            thump: 0.0,
+            thump_raw: 0.0,
             expo: 1.0,
             jelly_t: 0.0,
             mote_t: 0.0,
@@ -191,10 +212,11 @@ impl Pulse {
         self.gate > 0.5
     }
 
-    /// How much to add to the flow speed (scaled by the gate).
+    /// How much to add to the flow speed: a slow lift with the overall level, plus a
+    /// surge on each hit (both scaled by the gate).
     pub fn flow_speed_add(&self, reduced_motion: bool) -> f32 {
         let m = if reduced_motion { 0.3 } else { 1.0 };
-        self.gate * m * self.flow_boost * 0.8
+        m * (self.gate * self.flow_boost * 0.8 + self.surge)
     }
 
     fn step_morph(&mut self) {
@@ -229,6 +251,7 @@ impl Pulse {
         let s = f.sound;
         if hits.kick > 0.0 {
             self.kick_raw = self.kick_raw.max(hits.kick);
+            self.thump_raw = self.thump_raw.max(hits.kick);
         }
         if hits.snare > 0.0 {
             self.snare_env = self.snare_env.max(hits.snare);
@@ -243,6 +266,8 @@ impl Pulse {
         self.snare_env *= (-dt * 6.0).exp();
         self.hat_env *= (-dt * 10.0).exp();
         let period = f.period.clamp(0.25, 1.5);
+        self.thump_raw *= (-dt / (THUMP_DECAY * period)).exp();
+        self.thump += (self.thump_raw - self.thump) * smooth_k(THUMP_ATTACK, dt);
         self.cam_raw *= (-dt * 2.0 / period).exp();
         self.cam += (self.cam_raw - self.cam) * smooth_k(12.0, dt);
         // Two smoothing stages give an ease-in-out rock rather than a jolt. Heavy music
@@ -270,6 +295,7 @@ impl Pulse {
         let cam = if f.reduced_motion { 0.0 } else { g };
         let (low, mid, high, kk) = (l.low * g, l.mid * g, l.high * g, self.kick * g);
         let e = f.energy.clamp(0.0, 1.0);
+        let thump = self.thump * g;
 
         // Beat-stepped re-forming. With music, steps land on beats the reaction asks for;
         // without music, Energy sets an ambient step every couple of seconds.
@@ -293,13 +319,17 @@ impl Pulse {
         let react = (0.55 + 0.6 * s.intensity) * amp;
         let bass = s.bass_sustain * g * amp;
         let heav = s.heaviness;
+        self.surge = (MAX_SURGE * amp * thump).min(MAX_SURGE);
 
         // Local wobble and motes: always some with Energy, more with the music.
         let jelly = calm
             * (e * 0.12
                 + react * (w_je * (kk * 0.22 + mid * 0.08) + w_pu * kk * 0.08)
-                + bass * 0.18 * (0.5 + heav));
-        self.jelly_t += (dt * (0.25 + e * 0.5 + g * (mid * 0.5 + w_je * kk * 0.8)) * calm) as f64;
+                + bass * 0.18 * (0.5 + heav)
+                + amp * thump * (0.08 + 0.18 * w_je + 0.1 * w_pu));
+        self.jelly_t += (dt
+            * (0.25 + e * 0.5 + g * (mid * 0.5 + w_je * kk * 0.8) + amp * thump * 1.5)
+            * calm) as f64;
         let motes =
             ((e - 0.3).max(0.0) * 0.55 + (w_mt * g * 0.25 + g * s.poly * 0.15) * amp).min(0.6);
         self.mote_t += (dt * (0.5 + e * 0.7 + w_mt * high * amp) * calm) as f64;
@@ -318,7 +348,7 @@ impl Pulse {
         Visual {
             zoom: 1.0 - cam * w_zo.min(1.0) * self.cam * depth,
             ang_off: cam * w_sp.min(1.0) * self.sway,
-            warp_add: calm * (w_br * mid * 0.1 * amp + bass * 0.25 * heav),
+            warp_add: calm * ((w_br * mid * 0.1 + 0.2 * thump) * amp + bass * 0.25 * heav),
             chroma_add: (w_sh * high * 0.3 + g * self.snare_env * 0.2) * amp,
             expo: self.expo,
             hue: g * self.hue + (w_hu * kk * 0.03 + w_sh * high * 0.015) * amp,
@@ -761,6 +791,102 @@ mod tests {
             assert!(v.ang_off.abs() <= MAX_SWAY + 1e-6);
             prev = v.expo;
         }
+    }
+
+    /// Kicks every half second (on the beat) at 120 bpm.
+    fn kicks(i: usize) -> Hits {
+        Hits {
+            kick: if i.is_multiple_of(30) { 1.0 } else { 0.0 },
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn kicks_thump_quickly_and_fade_before_the_next_one() {
+        let mut p = Pulse::default();
+        let l = loud();
+        let mut thump = vec![];
+        for i in 0..240 {
+            p.frame(FrameInput {
+                hits: kicks(i),
+                ..input(&l, true, i.is_multiple_of(30), 0.5)
+            });
+            thump.push(p.thump);
+        }
+        for k in (120..210).step_by(30) {
+            let swell = thump[k + 2];
+            let before_next = thump[k + 28];
+            assert!(swell > 0.6, "thump 33 ms after a kick: {swell}");
+            assert!(
+                before_next < 0.15,
+                "thump just before the next kick: {before_next}"
+            );
+            // Rounded attack: the first frame doesn't jump all the way.
+            assert!(thump[k] < swell, "attack should swell, not jump");
+        }
+    }
+
+    #[test]
+    fn kicks_drive_the_surge_warp_and_wobble() {
+        let quiet = run_with(&mut Pulse::default(), 4.0, MUSIC, |_| Hits::default());
+        let mut p = Pulse::default();
+        let hit = run_with(&mut p, 4.0, MUSIC, kicks);
+        assert!(peak(&hit, |v| v.warp_add) > peak(&quiet, |v| v.warp_add) + 0.1);
+        assert!(peak(&hit, |v| v.jelly) > peak(&quiet, |v| v.jelly) + 0.1);
+        // The surge rises on a kick and falls between them.
+        let mut p = Pulse::default();
+        let mut surge = vec![];
+        let l = loud();
+        for i in 0..240 {
+            p.frame(FrameInput {
+                hits: kicks(i),
+                ..input(&l, true, i.is_multiple_of(30), 0.5)
+            });
+            surge.push(p.flow_speed_add(false));
+        }
+        assert!(
+            surge[182] > surge[178] + 1.5,
+            "{} vs {}",
+            surge[182],
+            surge[178]
+        );
+        assert!(p.surge <= MAX_SURGE);
+        assert!(p.flow_speed_add(true) < p.flow_speed_add(false) * 0.35 + 1e-6);
+    }
+
+    #[test]
+    fn predicted_beats_alone_do_not_thump() {
+        // Through a breakdown the beat clock keeps ticking but no kicks land: stay still.
+        let mut p = Pulse::default();
+        run_with(&mut p, 4.0, MUSIC, |_| Hits::default());
+        assert_eq!(p.thump, 0.0);
+        assert_eq!(p.surge, 0.0);
+    }
+
+    #[test]
+    fn kicks_never_move_the_camera() {
+        let none = run_with(&mut Pulse::default(), 6.0, MUSIC, |_| Hits::default());
+        let hit = run_with(&mut Pulse::default(), 6.0, MUSIC, |i| Hits {
+            kick: (i % 2) as f32,
+            ..Default::default()
+        });
+        for (a, b) in none.iter().zip(&hit) {
+            assert_eq!(a.zoom, b.zoom);
+            assert_eq!(a.ang_off, b.ang_off);
+        }
+    }
+
+    #[test]
+    fn kicks_are_silent_without_audio() {
+        let mut p = Pulse::default();
+        let quiet = Levels::default();
+        for i in 0..120 {
+            p.frame(FrameInput {
+                hits: kicks(i),
+                ..input(&quiet, false, false, 0.5)
+            });
+        }
+        assert_eq!(p.surge, 0.0);
     }
 
     #[test]
