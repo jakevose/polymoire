@@ -1,0 +1,50 @@
+# Development tooling for Driftfield. Run `mise install` once, then `mise run <task>`.
+[tools]
+rust = { version = "1.97", components = "clippy,rustfmt" }
+
+[env]
+CARGO_TERM_COLOR = "always"
+
+[tasks.run]
+description = "Run the app (release build)"
+run = "cargo run --release"
+
+[tasks.dev]
+description = "Run the app (debug build)"
+run = "cargo run"
+
+[tasks.build]
+description = "Build an optimized binary"
+run = "cargo build --release --locked"
+
+[tasks.check]
+description = "Type-check everything quickly"
+run = "cargo check --all-targets"
+
+[tasks.smoke]
+description = "Launch the app for 20 seconds with the demo beat, then print a report"
+env = { DRIFTFIELD_SMOKE_SECS = "20", DRIFTFIELD_DEMO = "1" }
+run = "cargo run --release"
+
+[tasks.test]
+description = "Run the automated test suite"
+run = "cargo test --all-targets --locked"
+
+[tasks.fmt]
+description = "Format the code"
+run = "cargo fmt --all"
+
+[tasks.lint]
+description = "Check formatting and clippy lints"
+run = [
+  "cargo fmt --all -- --check",
+  "cargo clippy --all-targets --locked -- -D warnings",
+]
+
+[tasks.ci]
+description = "Everything CI runs"
+depends = ["lint", "test"]
+
+[tasks.package]
+description = "Build installers for this platform into target/dist"
+run = "mise exec cargo:cargo-packager@latest -- cargo packager --release"
