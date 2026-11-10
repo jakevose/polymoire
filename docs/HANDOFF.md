@@ -27,6 +27,9 @@ Last updated: 2026-11-10.
 
 ## Releases
 
+- **v0.1.0 was released 2026-11-10** (github.com/jakevose/polymoire/releases/tag/v0.1.0,
+  private repo). For the next release, bump `version` in `Cargo.toml`, then tag `vX.Y.Z`
+  on that commit and push the tag. Run the workflow by hand first if packaging changed.
 - `.github/workflows/release.yml` builds Linux x64 and arm64 (`.deb`, `.AppImage`),
   Windows x64 (NSIS `.exe`) and macOS arm64 and x64 (`.dmg`). A `v*` tag publishes a
   GitHub release; running it by hand (workflow_dispatch) builds artifacts only.
@@ -155,5 +158,7 @@ median time from a kick to the signal's peak.
   - Fixed a CI lint failure: the code had been linted with the wrong toolchain (see
     Verifying).
   - Release prep: added the app icon set, ad-hoc macOS signing plus DMG build, and
-    install steps for users. Dry runs of the Release workflow come before tagging
-    v0.1.0.
+    install steps for users. After two Release dry runs (the first failed on the
+    missing icon), checked the artifacts (macOS: ad-hoc signed without hardened
+    runtime, correct architectures, audio permission text present) and published
+    v0.1.0 with 7 installers.
