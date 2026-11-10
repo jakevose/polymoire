@@ -68,7 +68,9 @@ sudo apt-get install libasound2-dev libpulse-dev libxkbcommon-dev libwayland-dev
 | Path | What |
 | --- | --- |
 | `src/traits.rs` | Trait catalog, weighted picks, crossfades, the one-or-two-at-a-time scheduler |
-| `src/analysis.rs` | Band levels, kick onsets, tempo, phase-locked beat clock |
+| `src/analysis.rs` | Band levels, sustained bass, kick/snare/hat hits, rhythm character |
+| `src/tempo.rs` | Tempo and beat phase by autocorrelation of drum onsets |
+| `src/vibe.rs` | Intensity, heaviness and mood from the sound; biases trait picks |
 | `src/demo.rs` | Demo beat synth |
 | `src/reactions.rs` | Audio → light/color modifiers, drop detection |
 | `src/quality.rs` | Adaptive render resolution for slow GPUs |

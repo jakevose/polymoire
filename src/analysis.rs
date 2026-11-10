@@ -1,5 +1,5 @@
 //! Audio analysis: band levels, sustained bass, per-instrument hits (kick, snare, hats),
-//! tempo with a phase-locked beat clock, and rhythm character (syncopation, triplet feel,
+//! tempo with a beat clock (see [`crate::tempo`]), and rhythm character (syncopation, triplet feel,
 //! dotted / polyrhythmic patterns).
 //!
 //! The analyzer is fed every sample (mono) from the audio thread, so a slow video frame can
@@ -8,6 +8,7 @@
 //! "has a beat or hit landed yet?" each frame.
 
 use crate::dsp::{smooth_k, Biquad, FilterKind};
+use crate::tempo::Tempo;
 use std::collections::VecDeque;
 
 /// Samples per analysis hop (~5 ms at 48 kHz).
@@ -209,16 +210,11 @@ pub struct Analyzer {
     det: [Onset; 3],
     onsets: u64,
     band_onsets: [u64; 3],
-    last_kick: f64,
     stats: [BandStats; 3],
     events: VecDeque<(f64, usize, f32)>,
     // tempo + beat clock
-    ibi: Vec<f64>,
-    period: f64,
-    bpm: f32,
-    locked: bool,
-    anchor: f64,
-    last_hit: f64,
+    tempo: Tempo,
+    prev_e: [f32; 3],
     last_fired: f64,
     pending: VecDeque<f64>,
 }
@@ -249,15 +245,10 @@ impl Analyzer {
             ],
             onsets: 0,
             band_onsets: [0; 3],
-            last_kick: -9.0,
             stats: Default::default(),
             events: VecDeque::with_capacity(32),
-            ibi: Vec::with_capacity(16),
-            period: 0.5,
-            bpm: 0.0,
-            locked: false,
-            anchor: 0.0,
-            last_hit: -99.0,
+            tempo: Tempo::new(HOP as f64 / sample_rate as f64),
+            prev_e: [0.0; 3],
             last_fired: -99.0,
             pending: VecDeque::with_capacity(8),
         }
@@ -274,11 +265,11 @@ impl Analyzer {
 
     /// Beat period in seconds (meaningful once `levels().bpm > 0`).
     pub fn period(&self) -> f64 {
-        self.period
+        self.tempo.period
     }
 
     pub fn is_locked(&self) -> bool {
-        self.locked
+        self.tempo.locked
     }
 
     /// Total kick onsets detected so far (for diagnostics and tests).
@@ -362,6 +353,22 @@ impl Analyzer {
                 self.on_hit(band, t, strength);
             }
         }
+
+        // Onset strength for the tempo tracker: how sharply each drum band rose this hop,
+        // relative to its own recent peak. A small dead band ignores the ripple of held notes.
+        let mut rise = [0.0f32; 3];
+        for b in 0..3 {
+            let en = energies[b];
+            if en > PRESENCE_RMS * 0.5 {
+                rise[b] = ((en - self.prev_e[b]) / self.det[b].peak - 0.05).clamp(0.0, 1.0);
+            }
+            self.prev_e[b] = en;
+        }
+        self.tempo.push(
+            rise[KICK] + 0.7 * rise[SNARE] + 0.3 * rise[HAT],
+            rise[KICK] + 0.3 * rise[SNARE],
+            t + h as f64 * 0.5,
+        );
     }
 
     fn on_hit(&mut self, band: usize, t: f64, strength: f32) {
@@ -375,8 +382,8 @@ impl Analyzer {
         }
         let s = &mut self.stats[band];
         s.count += 1.0;
-        if self.locked {
-            let r = (t - s.last) / self.period;
+        if self.tempo.locked {
+            let r = (t - s.last) / self.tempo.period;
             if near(r, &[0.25, 0.5, 1.0, 2.0], 0.06) {
                 s.straight += 1.0;
             } else if near(r, &[1.0 / 3.0, 2.0 / 3.0, 4.0 / 3.0], 0.05) {
@@ -384,7 +391,7 @@ impl Analyzer {
             } else if near(r, &[0.75, 1.5], 0.06) {
                 s.dotted += 1.0;
             }
-            let phase = ((t - self.anchor) / self.period).rem_euclid(1.0);
+            let phase = ((t - self.tempo.anchor) / self.tempo.period).rem_euclid(1.0);
             let bin = ((phase * 12.0).round() as usize) % 12;
             s.grid[bin] += strength;
         }
@@ -397,47 +404,7 @@ impl Analyzer {
 
     fn on_kick(&mut self, t: f64) {
         self.onsets += 1;
-        let dtb = t - self.last_kick;
-        self.last_kick = t;
-        if dtb < 1.6 {
-            // Fold intervals into one octave (75–150 bpm) so off-beats and half-time agree.
-            let mut x = dtb;
-            while x < 0.4 {
-                x *= 2.0;
-            }
-            while x > 0.8 {
-                x /= 2.0;
-            }
-            self.ibi.push(x);
-            if self.ibi.len() > 16 {
-                self.ibi.remove(0);
-            }
-        }
-        if self.ibi.len() >= 4 {
-            let mut s = self.ibi.clone();
-            s.sort_by(|a, b| a.total_cmp(b));
-            self.period = s[s.len() / 2];
-            let q1 = s[s.len() / 4];
-            let q3 = s[(s.len() * 3) / 4];
-            self.bpm = (60.0 / self.period) as f32;
-            if !self.locked && q3 - q1 < 0.05 {
-                self.locked = true;
-            }
-        }
-        if self.locked {
-            let k = ((t - self.anchor) / self.period).round();
-            let err = t - (self.anchor + k * self.period);
-            if err.abs() < 0.3 * self.period {
-                self.anchor += k * self.period + err * 0.35;
-                self.last_hit = t;
-            } else if t - self.last_hit > 3.0 * self.period {
-                self.anchor = t;
-                self.last_hit = t;
-            }
-        } else {
-            self.anchor = t;
-            self.last_hit = t;
-        }
+        // Until the tempo is known, beats simply follow the kicks.
         self.pending.push_back(t);
         if self.pending.len() > 8 {
             self.pending.pop_front();
@@ -448,15 +415,12 @@ impl Analyzer {
     /// Returns true when a beat lands. Once the tempo is locked, beats are predicted so they
     /// land on time (not after detection), and keep going through short gaps like breakdowns.
     pub fn poll_beat(&mut self, heard: f64) -> bool {
-        if self.locked && heard - self.last_hit > 10.0 * self.period {
-            self.locked = false;
-            self.ibi.clear();
-        }
-        if self.locked {
+        if self.tempo.locked {
+            let (anchor, period) = (self.tempo.anchor, self.tempo.period);
             self.pending.clear();
-            let k = ((heard - self.anchor) / self.period).floor();
-            let bt = self.anchor + k * self.period;
-            if bt > self.last_fired + self.period * 0.5 && heard - bt < 0.12 {
+            let k = ((heard - anchor) / period).floor();
+            let bt = anchor + k * period;
+            if bt > self.last_fired + period * 0.5 && heard - bt < 0.12 {
                 self.last_fired = bt;
                 return true;
             }
@@ -513,7 +477,7 @@ impl Analyzer {
             high: self.smooth[2],
             level_fast: self.level_fast,
             level_slow: self.level_slow,
-            bpm: if self.ibi.len() >= 4 { self.bpm } else { 0.0 },
+            bpm: self.tempo.bpm(),
             present: self.level_fast > PRESENCE_RMS,
             bass_sustain: (self.low_slow / self.peak[0]).clamp(0.0, 1.0),
             share,
@@ -662,6 +626,53 @@ mod tests {
             assert!((got - bpm).abs() < 2.5, "expected {bpm}, got {got}");
             assert!(a.is_locked(), "should lock at {bpm} bpm");
         }
+    }
+
+    #[test]
+    fn syncopated_kicks_still_give_the_right_tempo_and_beat_count() {
+        // 100 bpm: kicks in a 3-3-2 pattern (gaps of 0.45 s suggest 133 bpm), snare on the
+        // backbeat, eighth-note hats. The old kick-gap method fired ~1.5 beats per beat here.
+        let beat = 0.6f32;
+        let secs = 16.0;
+        let mut noise = Rng::new(21);
+        let mut hp = Biquad::new(FilterKind::HighPass, SR, 8_000.0, 0.7);
+        let mut bp = Biquad::new(FilterKind::BandPass, SR, 3_000.0, 0.8);
+        let audio: Vec<f32> = (0..(SR * secs) as usize)
+            .map(|i| {
+                let t = i as f32 / SR;
+                let c = t % (2.0 * beat);
+                let w = noise.f32() * 2.0 - 1.0;
+                let mut x = 0.0;
+                for k in [0.0, 0.75 * beat, 1.5 * beat] {
+                    if c >= k {
+                        x += kick_at(c - k);
+                    }
+                }
+                if c >= beat {
+                    x += bp.process(w) * (-(c - beat) / 0.06).exp() * 0.9;
+                } else {
+                    bp.process(w);
+                }
+                x + hp.process(w) * (-(t % (beat / 2.0)) / 0.015).exp() * 0.4
+            })
+            .collect();
+        let mut a = Analyzer::new(SR);
+        let frame = (SR / 60.0) as usize;
+        let mut late_beats = 0;
+        for (i, chunk) in audio.chunks(frame).enumerate() {
+            a.push(chunk);
+            if a.poll_beat(a.time()) && (i * frame) as f32 / SR > 6.0 {
+                late_beats += 1;
+            }
+        }
+        let bpm = a.levels().bpm;
+        assert!((bpm - 100.0).abs() < 2.5, "read as {bpm}");
+        // 10 s at 100 bpm is 16–17 beats.
+        assert!(
+            (15..=18).contains(&late_beats),
+            "{late_beats} beats in 10 s"
+        );
+        assert!(a.rhythm().dotted > 0.3, "{:?}", a.rhythm());
     }
 
     #[test]

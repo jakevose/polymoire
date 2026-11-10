@@ -47,7 +47,7 @@ impl Mood {
 pub struct Features {
     /// Loudness relative to the loudest the track has been lately, 0..1.
     pub loudness: f32,
-    /// Hits per second, scaled so ~8/s is 1.
+    /// Hits per second, scaled so ~14/s is 1 (a house loop with 16th hats is ~0.6).
     pub density: f32,
     pub bass_share: f32,
     pub bright_share: f32,
@@ -116,7 +116,7 @@ impl Vibe {
             .max(0.02);
         Features {
             loudness: (l.level_slow / self.loud_peak).clamp(0.0, 1.0),
-            density: (r.density / 8.0).clamp(0.0, 1.0),
+            density: (r.density / 14.0).clamp(0.0, 1.0),
             bass_share: l.share[0],
             bright_share: l.share[2],
             bass_sustain: l.bass_sustain,

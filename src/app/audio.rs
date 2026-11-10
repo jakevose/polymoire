@@ -71,6 +71,15 @@ pub struct AudioEngine {
     demo: Option<cpal::Stream>,
     demo_feed: SharedFeed,
     demo_error: Option<String>,
+    /// The default output device capture was last started on, to notice when it changes.
+    output_name: Option<String>,
+    last_device_check: Instant,
+}
+
+fn default_output_name() -> Option<String> {
+    cpal::default_host()
+        .default_output_device()
+        .map(|d| d.to_string())
 }
 
 impl AudioEngine {
@@ -82,6 +91,8 @@ impl AudioEngine {
             demo: None,
             demo_feed: Arc::new(Mutex::new(None)),
             demo_error: None,
+            output_name: None,
+            last_device_check: Instant::now(),
         };
         engine.start_system();
         engine
@@ -89,6 +100,8 @@ impl AudioEngine {
 
     pub fn start_system(&mut self) {
         self.system = None;
+        self.output_name = default_output_name();
+        self.last_device_check = Instant::now();
         set(&self.system_status, "Connecting to system audio…");
         match capture::start(self.system_feed.clone(), self.system_status.clone()) {
             Ok(c) => {
@@ -147,8 +160,33 @@ impl AudioEngine {
         s
     }
 
+    /// Reconnects system capture when the default output device changes (headphones
+    /// plugged in, a different speaker chosen) or the stream reported an error. Checked
+    /// every two seconds.
+    fn follow_output_device(&mut self) {
+        if self.last_device_check.elapsed().as_secs_f32() < 2.0 {
+            return;
+        }
+        self.last_device_check = Instant::now();
+        let stopped = self
+            .system_status
+            .lock()
+            .map(|s| s.starts_with("System audio stopped"))
+            .unwrap_or(false);
+        let name = default_output_name();
+        if stopped || (name.is_some() && name != self.output_name) {
+            self.start_system();
+            if self.demo.is_some() {
+                // The demo plays on the default output too: move it along.
+                self.set_demo(false);
+                self.set_demo(true);
+            }
+        }
+    }
+
     /// Call once per video frame.
     pub fn frame(&mut self) -> AudioFrame {
+        self.follow_output_device();
         let feed = if self.demo_on() {
             &self.demo_feed
         } else {

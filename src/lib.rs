@@ -12,6 +12,7 @@ pub mod dsp;
 pub mod quality;
 pub mod reactions;
 pub mod rng;
+pub mod tempo;
 pub mod traits;
 pub mod uniforms;
 pub mod vibe;
