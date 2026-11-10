@@ -26,6 +26,14 @@ description = "Launch the app for 20 seconds with the demo beat, then print a re
 env = { DRIFTFIELD_SMOKE_SECS = "20", DRIFTFIELD_DEMO = "1" }
 run = "cargo run --release"
 
+[tasks.app]
+description = "macOS: build and open Driftfield.app (needed for system-audio permission)"
+run = "bash scripts/mac-app.sh"
+
+[tasks.app-smoke]
+description = "macOS: smoke test the app bundle against system audio"
+run = "bash scripts/mac-app.sh DRIFTFIELD_SMOKE_SECS=25 DRIFTFIELD_SMOKE_DIR={{config_root}}/target"
+
 [tasks.test]
 description = "Run the automated test suite"
 run = "cargo test --all-targets --locked"

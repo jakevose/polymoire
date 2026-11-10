@@ -6,7 +6,7 @@ set -u
 cd "$(dirname "$0")/.." || exit 1
 dir=.runner
 mkdir -p "$dir"
-allowed=" build test lint fmt ci smoke check "
+allowed=" build test lint fmt ci smoke check app app-smoke "
 
 if ! command -v mise >/dev/null 2>&1; then
   echo "mise is not installed. Install it from https://mise.jdx.dev then rerun this script."

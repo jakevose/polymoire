@@ -126,7 +126,8 @@ impl DriftApp {
         let events = ctx.input(|i| i.raw.events.clone());
         for e in events {
             if let egui::Event::Screenshot { image, .. } = e {
-                let path = std::path::Path::new("target").join("smoke.ppm");
+                let dir = std::env::var("DRIFTFIELD_SMOKE_DIR").unwrap_or_else(|_| "target".into());
+                let path = std::path::Path::new(&dir).join("smoke.ppm");
                 let mut out =
                     format!("P6\n{} {}\n255\n", image.size[0], image.size[1]).into_bytes();
                 for p in &image.pixels {
@@ -151,6 +152,8 @@ impl DriftApp {
             println!("audio_status: {}", self.audio.status(levels.present));
             println!("demo_on: {}", self.audio.demo_on());
             println!("system_audio_ok: {}", self.audio.system_ok());
+            let (n, peak, sr) = self.audio.system_stats();
+            println!("system_samples: {n} at {sr} Hz, loudest_rms: {peak:.4}");
             println!("bpm: {:.1}", levels.bpm);
             println!("beats_seen: {}", s.beats);
             println!("gate: {:.2}", self.pulse.gate);
@@ -319,7 +322,9 @@ impl eframe::App for DriftApp {
         self.handle_keys(ctx);
         self.step(dt);
         self.smoke_frame(ctx, dt);
-        ctx.request_repaint();
+        // ui() requests the next frame while the window is visible. When it's hidden or
+        // minimized, only logic runs, so tick slowly instead of spinning the CPU.
+        ctx.request_repaint_after(std::time::Duration::from_millis(50));
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
@@ -342,5 +347,6 @@ impl eframe::App for DriftApp {
             self.set_fullscreen(&ctx, !self.fullscreen);
         }
         hud::show(&ctx, self);
+        ctx.request_repaint();
     }
 }

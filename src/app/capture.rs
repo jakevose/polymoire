@@ -1,6 +1,6 @@
 //! System audio capture (what the computer is playing), per platform:
 //! - Windows: WASAPI loopback on the default output device (via cpal).
-//! - macOS 14.2+: a Core Audio process tap on the default output device (via cpal). The
+//! - macOS 14.6+: a Core Audio process tap on the default output device (via cpal). The
 //!   first run asks for "System Audio Recording" permission.
 //! - Linux: the PulseAudio / PipeWire monitor of the default output.
 
@@ -77,7 +77,7 @@ pub fn start(feed: SharedFeed, status: Arc<Mutex<String>>) -> Result<Capture, St
 #[cfg(not(target_os = "linux"))]
 fn explain(e: &str) -> String {
     if cfg!(target_os = "macos") {
-        format!("Can't capture system audio (needs macOS 14.2+ and System Audio Recording permission): {e}")
+        format!("Can't capture system audio (needs macOS 14.6+ and System Audio Recording permission): {e}")
     } else {
         format!("Can't capture system audio: {e}")
     }

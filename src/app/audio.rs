@@ -12,6 +12,9 @@ pub struct Feed {
     pub analyzer: Analyzer,
     /// (stream time of the last pushed sample, wall time it was pushed, output latency).
     anchor: Option<(f64, Instant, f64)>,
+    /// Diagnostics: samples received and loudest block (RMS).
+    pub samples: u64,
+    pub peak_rms: f32,
 }
 
 impl Feed {
@@ -19,6 +22,8 @@ impl Feed {
         Feed {
             analyzer: Analyzer::new(sample_rate),
             anchor: None,
+            samples: 0,
+            peak_rms: 0.0,
         }
     }
 
@@ -26,6 +31,11 @@ impl Feed {
     /// (zero for captured system audio, which has already played).
     pub fn push(&mut self, mono: &[f32], latency: f64) {
         self.analyzer.push(mono);
+        self.samples += mono.len() as u64;
+        if !mono.is_empty() {
+            let rms = (mono.iter().map(|x| x * x).sum::<f32>() / mono.len() as f32).sqrt();
+            self.peak_rms = self.peak_rms.max(rms);
+        }
         self.anchor = Some((self.analyzer.time(), Instant::now(), latency));
     }
 
@@ -86,6 +96,14 @@ impl AudioEngine {
 
     pub fn system_ok(&self) -> bool {
         self.system.is_some()
+    }
+
+    /// (samples received, loudest block RMS, sample rate) from system capture.
+    pub fn system_stats(&self) -> (u64, f32, f32) {
+        match self.system_feed.lock().unwrap().as_ref() {
+            Some(f) => (f.samples, f.peak_rms, f.analyzer.sample_rate()),
+            None => (0, 0.0, 0.0),
+        }
     }
 
     pub fn demo_on(&self) -> bool {

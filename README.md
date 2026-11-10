@@ -22,7 +22,7 @@ zooms, bounces or spins the view, which is what causes motion sickness.
 | Platform | How | Notes |
 | --- | --- | --- |
 | Windows 10/11 | WASAPI loopback of the default output | Works out of the box. |
-| macOS 14.2+ | Core Audio process tap | First run asks for **System Audio Recording** permission (System Settings → Privacy & Security). macOS 11–14.1 run the visuals and demo beat, but can't capture system audio. |
+| macOS 14.6+ | Core Audio process tap | First run asks for **System Audio Recording** permission (System Settings → Privacy & Security). Only an app bundle can ask, so run `Driftfield.app` (`mise run app` in development), not the bare binary. Older macOS runs the visuals and demo beat without system audio. |
 | Linux | PulseAudio / PipeWire monitor of the default output | Needs `libpulse` (present on standard desktops with PulseAudio or PipeWire). |
 
 ## Development
@@ -37,6 +37,8 @@ mise run test       # automated tests
 mise run lint       # rustfmt + clippy
 mise run ci         # everything CI runs
 mise run smoke      # launch for 20 s on the demo beat, save target/smoke.ppm, print a report
+mise run app        # macOS: build and open Driftfield.app (needed for system audio)
+mise run app-smoke  # macOS: 25 s smoke test of the app bundle against system audio
 mise run package    # installers for this platform → target/dist
 ```
 
