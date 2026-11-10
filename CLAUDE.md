@@ -22,7 +22,8 @@ read in two minutes.
 ## Working conventions
 
 - Run `mise run ci` (formatting check, clippy with warnings as errors, tests) before
-  committing.
+  committing. Use mise, not bare `cargo`: the shell's default Rust can be newer than the
+  version `mise.toml` pins for CI, and clippy lints differ between versions.
 - Commit on `main`, which is the user's workflow. Push only when asked.
 - The comfort rules (no flashing; whole-view camera moves only at half tempo; Reduce
   motion) are hard requirements, enforced by tests in `src/reactions.rs`. Never loosen

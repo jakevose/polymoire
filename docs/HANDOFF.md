@@ -101,7 +101,9 @@ median time from a kick to the signal's peak.
 
 ## Verifying
 
-- `mise run ci` runs the formatting check, clippy and tests (what CI runs).
+- `mise run ci` runs the formatting check, clippy and tests (what CI runs), on the Rust
+  version `mise.toml` pins (1.97). The shell's default `cargo` here is 1.98, and its
+  clippy missed a `manual_range_contains` lint that 1.97 fails on.
 - `cargo run --release --example pulse_probe` measures the pulse. Compare against the
   baseline above when tuning.
 - `mise run smoke` opens a window for 20 s and **plays the demo beat on the speakers**.
@@ -133,3 +135,5 @@ median time from a kick to the signal's peak.
   - Added shuffle-bag trait rotation.
   - Renamed the repo `driftfield` → `polymoire` on GitHub.
   - Added these notes, `CLAUDE.md` and `examples/pulse_probe.rs`.
+  - Fixed a CI lint failure: the code had been linted with the wrong toolchain (see
+    Verifying).

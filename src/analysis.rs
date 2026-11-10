@@ -423,7 +423,7 @@ impl Analyzer {
         let on_grid = !with_snare
             && (!self.tempo.locked || {
                 let phase = ((t - self.tempo.anchor) / self.tempo.period).rem_euclid(1.0);
-                phase < KICK_GRID_TOL || phase > 1.0 - KICK_GRID_TOL
+                !(KICK_GRID_TOL..=1.0 - KICK_GRID_TOL).contains(&phase)
             });
         let need = if on_grid { KICK_ON_GRID } else { KICK_OFF_GRID };
         // A snare's body reaches into the low band; with no kicks around (a breakdown roll)
