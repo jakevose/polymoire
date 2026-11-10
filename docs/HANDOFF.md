@@ -1,0 +1,135 @@
+# Handoff notes
+
+What a new session needs to pick up the work: where things stand, why things are the way
+they are, and what is still open. The code and git history say *what*; this file says
+*why* and *what's next*. Keep it current (see `CLAUDE.md`).
+
+Last updated: 2026-11-10.
+
+## Where things stand
+
+- **Repo:** `github.com/jakevose/polymoire` (private). It was renamed from `driftfield` on
+  2026-11-10, and the old URL redirects. Work is committed straight to `main`; push only
+  when asked. CI (`.github/workflows/ci.yml`) runs `mise run ci` on Linux, Windows and
+  macOS and takes about 20 minutes.
+- **Current focus: making the picture feel tied to the music.** The path so far:
+  1. The user said it "doesn't feel responsive". Measured: the visual changes were
+     tiny (warp added at most 0.03 on a 0–1.05 trait), arrived 50–170 ms late, and
+     flattened out on compressed masters.
+  2. Added per-band "punch" (each band against its own average, instant attack).
+     The user found it **"too twitchy and less pulse-y"**, so it was removed.
+  3. Now: kick detection is fixed for loud masters, and a single **kick-driven thump**
+     drives the surge, warp and wobble. **The user hasn't yet confirmed how this
+     feels on real music.** If they report on it, tune with the dials below.
+- **Trait changes** now go through a shuffle bag (every trait changes once per round,
+  never twice in a row). The user asked about "effects"; this assumes they meant the
+  trait rows, not the options within the Effect trait. Not confirmed.
+
+## Map
+
+| File | Role |
+|---|---|
+| `src/analysis.rs` | Per-sample analyzer: band levels, kick/snare/hat hits, rhythm stats, beat clock |
+| `src/tempo.rs` | Autocorrelation tempo and beat phase |
+| `src/vibe.rs` | Intensity, heaviness, mood, `level` (loudness against the last minute) |
+| `src/reactions.rs` | `Pulse::frame`: audio → per-frame `Visual` modifiers. Comfort rules live here |
+| `src/traits.rs` | Trait catalog, crossfades, shuffle-bag scheduling |
+| `src/shader.wgsl` / `src/uniforms.rs` | Rendering; the uniform layout is checked against the WGSL by `tests/shader.rs` |
+| `src/demo.rs` | 120 bpm house loop. **The only ground truth for the analysis tests** |
+| `src/app/` | Window, audio devices, HUD, frame loop (`mod.rs::step`) |
+| `examples/pulse_probe.rs` | Measures kick accuracy and how well each visual signal pulses |
+
+The frame loop: `AudioEngine::frame` polls beats and hits at the time the listener is
+hearing, then `Vibe` and `Pulse::frame` turn them into a `Visual`, and `uniforms()` sends
+it to the shader. The flow clock `flow_t` advances by the Tempo trait plus
+`Pulse::flow_speed_add` (this is where the surge acts).
+
+## Decisions and why
+
+- **Comfort rules (the user's hard requirement, enforced by tests in `reactions.rs`).**
+  - Whole-view zoom and sway happen only at half tempo, with small eased caps.
+  - Brightness rises at most 10% and changes at most 60% per second (no flashing).
+  - Reduce motion turns the camera moves off.
+  - Responsiveness has to come from *local* motion: the flow clock, warp, jelly, motes.
+  - A pattern-scale pulse on each kick was rejected because it's effectively a
+    per-beat whole-view zoom.
+- **Kicks are judged against the track's own kicks.** On loud masters the bass line rose
+  almost as sharply as the kick: 61 false kicks per 40 s of demo, plus 16 real ones lost
+  to the cooldown. So a low-band onset is:
+  - judged at its peak, about 15 ms in;
+  - compared with `kick_ref`, the track's recent kick strength;
+  - required to reach 0.7× on the beat grid, or 0.85× off it or alongside a snare
+    (the snare case also has an absolute floor);
+  - not allowed to start the cooldown if rejected.
+
+  Real kicks score about 0.9–1.0 and bass notes and snare bodies about 0.5–0.7, so
+  there is margin. Guarded by `tests/demo_tempo.rs`.
+- **Thump, not punch.** Only detected kicks set the thump: not hats, stabs or bass notes,
+  and not the predicted beat grid, so breakdowns stay still. Per-band punch reacted to
+  everything, which read as twitchy.
+- **The loudness gain (`loudness_gain`)** scales every music-driven effect by how loud it
+  is now against the last minute: 0.3× in quiet passages up to 1.25× on swells. The
+  comfort caps apply after it.
+- **Shuffle bag for traits.** The old scheduler sorted by "least recently changed" plus
+  jitter, which could repeat a trait. The bag skips pinned, still-fading and (without
+  audio) Reaction traits; they keep their place. On refill, whatever just changed is
+  kept out of the front for the rest of the current shift plus a full next shift. An
+  arrow click counts as that trait's turn.
+
+## Tuning dials
+
+| Constant | Where | Effect |
+|---|---|---|
+| `THUMP_DECAY` (0.3 beats) | reactions.rs | How long each kick's pulse lasts. Longer is smoother, shorter is snappier |
+| `THUMP_ATTACK` (35/s, ~30 ms) | reactions.rs | How fast the pulse rises. Higher is punchier but risks twitchiness |
+| `MAX_SURGE` (3.0) | reactions.rs | How hard kicks push the patterns forward |
+| warp `0.2 * thump`, jelly `0.08 + 0.18 * w_je + 0.1 * w_pu` | `Pulse::frame` | How strongly kicks warp and wobble the picture |
+| `KICK_ON_GRID` / `KICK_OFF_GRID` (0.7 / 0.85) | analysis.rs | Kick strictness. Raise them if bass leaks through; lower them if real kicks are missed |
+| `KICK_REF_TAU` (8 s) | analysis.rs | How fast the kick reference forgets (recovery after a quieter section) |
+
+Baseline from `cargo run --release --example pulse_probe` at this point. "Pulse" is how
+much a signal rises in the 80 ms after a kick, as a share of its range; "peak" is the
+median time from a kick to the signal's peak.
+
+| Signal | Pulse (clean / loud) | Peak (clean) |
+|---|---|---|
+| Kicks found | 64/64, 0 extra (both) | — |
+| thump | 80% / 80% | 33 ms |
+| surge | 73% / 71% | 50 ms |
+| jelly | 71% / 68% | 50 ms |
+| warp_add | 70% / 66% | 50 ms |
+
+## Verifying
+
+- `mise run ci` runs the formatting check, clippy and tests (what CI runs).
+- `cargo run --release --example pulse_probe` measures the pulse. Compare against the
+  baseline above when tuning.
+- `mise run smoke` opens a window for 20 s and **plays the demo beat on the speakers**.
+- On macOS, system audio needs the app bundle: `mise run app` / `mise run app-smoke`.
+- `scripts/dev-runner.sh` lets a sandboxed tool run allowlisted `mise` tasks through
+  `.runner/` (gitignored).
+- Automated tests only cover the demo plus a soft-clipped copy of it. **Nothing checks
+  real music**; the user's own listening is the real test.
+
+## Open items
+
+- Confirm the thump on real tracks, then tune the dials.
+- If no kicks are detected (ambient music, or 808 hip-hop where kick and bass merge),
+  nothing produces a pulse. Consider a fallback, e.g. low-band onsets when there have
+  been no kicks for a few beats.
+- `Pulse.kick_raw` is still set by *predicted* beats as well as kicks. It feeds
+  brightness and jelly lightly, so the picture still breathes a little in breakdowns.
+  Consider moving it to kicks only.
+- Idea not yet built: send the band envelopes to the shader as uniforms so each field
+  can map bass, mids and highs to its own geometry. This changes `uniforms.rs`, the WGSL
+  struct and `tests/shader.rs` together.
+
+## Session log
+
+- **2026-11-10**
+  - Measured responsiveness. Tried per-band punch, then replaced it with the kick
+    thump.
+  - Fixed bass-as-kick false detections on loud masters.
+  - Added shuffle-bag trait rotation.
+  - Renamed the repo `driftfield` → `polymoire` on GitHub.
+  - Added these notes, `CLAUDE.md` and `examples/pulse_probe.rs`.
