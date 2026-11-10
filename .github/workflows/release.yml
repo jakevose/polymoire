@@ -33,11 +33,11 @@ jobs:
           - name: macOS arm64
             os: macos-latest
             target: aarch64-apple-darwin
-            formats: app,dmg
+            formats: app
           - name: macOS x64
             os: macos-latest
             target: x86_64-apple-darwin
-            formats: app,dmg
+            formats: app
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -67,6 +67,27 @@ jobs:
 
       - name: Package
         run: cargo packager --release --target ${{ matrix.target }} --formats ${{ matrix.formats }}
+
+      # cargo-packager leaves the app unsigned unless given an Apple identity, and Apple
+      # Silicon refuses an unsigned downloaded bundle ("damaged"). Sign it ad hoc, the
+      # way scripts/mac-app.sh does (no hardened runtime, which would block audio
+      # capture without extra entitlements), then build the DMG from the signed app.
+      - name: Sign app and build DMG (macOS)
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          set -euo pipefail
+          app=$(find target/dist -maxdepth 1 -name '*.app' | head -1)
+          codesign --force --deep --sign - "$app"
+          codesign --verify --deep --strict --verbose=2 "$app"
+          version=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
+          arch="${{ matrix.target }}"
+          arch="${arch%%-*}"
+          stage=$(mktemp -d)
+          cp -R "$app" "$stage/"
+          ln -s /Applications "$stage/Applications"
+          hdiutil create -volname Polymoire -srcfolder "$stage" -ov -format UDZO \
+            "target/dist/Polymoire_${version}_${arch}.dmg"
 
       - uses: actions/upload-artifact@v4
         with:

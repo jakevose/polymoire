@@ -107,6 +107,15 @@ Push a tag like `v0.1.0`. The **Release** workflow builds:
 - macOS arm64 and x64 (`.dmg`)
 - Linux x64 and arm64 (`.deb`, `.AppImage`)
 
-and attaches them to a GitHub release. The builds are unsigned: on macOS, right-click →
-Open the first time (or sign and notarize with an Apple Developer ID); on Windows,
-SmartScreen asks for confirmation.
+and attaches them to a GitHub release. Run the workflow by hand (Actions → Release → Run
+workflow) to build everything as downloadable artifacts without publishing.
+
+The builds aren't signed with a paid developer certificate, so each OS asks once:
+
+- **macOS:** open the `.dmg` and drag Polymoire to Applications. The first launch is
+  blocked: go to System Settings → Privacy & Security, click **Open Anyway** next to
+  Polymoire, then confirm. (On macOS 14 and older, right-click the app → Open.)
+- **Windows:** SmartScreen shows "Windows protected your PC": click **More info → Run
+  anyway**.
+- **Linux:** install the `.deb` (`sudo apt install ./polymoire_*.deb`), or make the
+  `.AppImage` executable (`chmod +x`) and run it.
