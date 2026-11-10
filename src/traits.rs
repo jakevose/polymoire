@@ -4,10 +4,9 @@
 use crate::rng::Rng;
 
 pub type Palette = [[f32; 3]; 4];
-/// Reaction weights: [breathe, pump, glow, shimmer, hue pulse, jelly, morph, motes].
-/// Reactions change light gently and move the picture locally; they never move the
-/// whole view (no zoom, pan or spin) and never flash.
-pub type ReactionWeights = [f32; 8];
+/// Reaction weights: [breathe, pump, glow, shimmer, hue pulse, jelly, morph, motes, zoom,
+/// spin]. Light changes are gentle and never flash; zoom and spin act at half tempo.
+pub type ReactionWeights = [f32; 10];
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Key {
@@ -273,15 +272,29 @@ pub fn catalog() -> Vec<TraitDef> {
             key: Key::Reaction,
             label: "Reaction",
             opts: vec![
-                re("Breathe", [1.0, 0.0, 0.4, 0.0, 0.0, 0.3, 0.0, 0.0]),
-                re("Pump", [0.3, 1.0, 0.0, 0.0, 0.2, 0.6, 0.0, 0.0]),
-                re("Glow", [0.3, 0.0, 1.0, 0.0, 0.2, 0.2, 0.3, 0.0]),
-                re("Shimmer", [0.2, 0.0, 0.2, 1.0, 0.0, 0.0, 0.0, 1.0]),
-                re("Hue pulse", [0.2, 0.2, 0.0, 0.0, 1.0, 0.3, 0.4, 0.0]),
-                re("Jelly", [0.2, 0.3, 0.0, 0.0, 0.0, 1.0, 0.3, 0.0]),
-                re("Re-form", [0.2, 0.2, 0.2, 0.0, 0.3, 0.2, 1.0, 0.0]),
-                re("Motes", [0.2, 0.0, 0.3, 0.4, 0.0, 0.2, 0.0, 1.0]),
-                re("Bop", [0.2, 0.6, 0.0, 0.0, 0.2, 0.8, 0.8, 0.3]),
+                re(
+                    "Breathe",
+                    [1.0, 0.0, 0.4, 0.0, 0.0, 0.3, 0.0, 0.0, 0.4, 0.0],
+                ),
+                re("Pump", [0.3, 1.0, 0.0, 0.0, 0.2, 0.6, 0.0, 0.0, 1.0, 0.2]),
+                re("Glow", [0.3, 0.0, 1.0, 0.0, 0.2, 0.2, 0.3, 0.0, 0.3, 0.2]),
+                re(
+                    "Shimmer",
+                    [0.2, 0.0, 0.2, 1.0, 0.0, 0.0, 0.0, 1.0, 0.2, 0.3],
+                ),
+                re(
+                    "Hue pulse",
+                    [0.2, 0.2, 0.0, 0.0, 1.0, 0.3, 0.4, 0.0, 0.3, 0.5],
+                ),
+                re("Jelly", [0.2, 0.3, 0.0, 0.0, 0.0, 1.0, 0.3, 0.0, 0.3, 0.3]),
+                re(
+                    "Re-form",
+                    [0.2, 0.2, 0.2, 0.0, 0.3, 0.2, 1.0, 0.0, 0.4, 0.4],
+                ),
+                re("Motes", [0.2, 0.0, 0.3, 0.4, 0.0, 0.2, 0.0, 1.0, 0.2, 0.4]),
+                re("Bop", [0.2, 0.6, 0.0, 0.0, 0.2, 0.8, 0.8, 0.3, 0.8, 0.8]),
+                re("Sway", [0.2, 0.0, 0.2, 0.0, 0.3, 0.3, 0.0, 0.0, 0.3, 1.0]),
+                re("Punch", [0.3, 0.6, 0.0, 0.0, 0.0, 0.4, 0.3, 0.0, 1.0, 0.3]),
             ],
         },
         TraitDef {
@@ -501,7 +514,7 @@ impl Traits {
         let (s, d) = (&self.state[i], &self.defs[i]);
         let get = |k: usize| match d.opts[k].value {
             Value::Reaction(w) => w,
-            _ => [0.0; 8],
+            _ => [0.0; 10],
         };
         let (a, b, m) = (get(s.from), get(s.to), self.mix(i, sim));
         let mut out = a;
@@ -553,11 +566,11 @@ impl Traits {
             .map(|i| (i, self.state[i].last + (self.rng.f32() as f64 - 0.5) * 14.0))
             .collect();
         free.sort_by(|a, b| a.1.total_cmp(&b.1));
-        let n = n.unwrap_or_else(|| if self.rng.chance(0.8) { 1 } else { 2 });
+        let n = n.unwrap_or_else(|| if self.rng.chance(0.55) { 1 } else { 2 });
         let mut changed = Vec::new();
         for &(i, _) in free.iter().take(n) {
             let to = pick_weighted(&self.defs[i].opts, Some(self.state[i].from), &mut self.rng);
-            let base = dur.unwrap_or_else(|| self.rng.range(4.0, 7.0) as f64);
+            let base = dur.unwrap_or_else(|| self.rng.range(2.5, 5.0) as f64);
             let s = &mut self.state[i];
             s.to = to;
             s.start = sim;
@@ -570,7 +583,7 @@ impl Traits {
 
     /// Seconds to hold before the next timed shift (used when no audio is playing).
     pub fn next_hold(&mut self, reduced_motion: bool) -> f64 {
-        self.rng.range(7.0, 12.0) as f64 * if reduced_motion { 2.0 } else { 1.0 }
+        self.rng.range(4.0, 8.0) as f64 * if reduced_motion { 2.0 } else { 1.0 }
     }
 
     /// What the HUD shows for trait `i`.
@@ -592,9 +605,18 @@ impl Traits {
     /// Beats between shifts while music drives the timing.
     pub fn beats_until_next(&mut self) -> u32 {
         if self.rng.chance(0.6) {
-            32
+            8
         } else {
-            16
+            4
+        }
+    }
+
+    /// Crossfade length, in beats, for shifts that land on the beat.
+    pub fn beat_fade(&mut self) -> f64 {
+        if self.rng.chance(0.5) {
+            2.0
+        } else {
+            4.0
         }
     }
 }

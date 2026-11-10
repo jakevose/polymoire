@@ -19,12 +19,13 @@ chroma, mosaic) and moves to whatever your computer is playing.
 
 ### Comfort: kinetic without motion sickness or flashing
 
-The picture moves a lot, but never all at once. Whole-field motion (zooming, panning,
-spinning to the beat) is what causes motion sickness, so beats instead drive *local*
-motion: the image wobbles in many directions at once ("jelly"), shapes re-form in eased
-steps on the beat ("re-form"), and motes orbit inside their own small cells. Brightness
-may rise at most 10% and changes no faster than 60% per second, so nothing flashes.
-Tests in `src/reactions.rs` enforce both rules.
+Most movement is local: the image wobbles in many directions at once ("jelly"), shapes
+re-form in eased steps on the beat ("re-form"), and motes orbit inside their own small
+cells. Whole-view zooms and spins happen only at **half the tempo** (every other beat):
+the view eases in by at most 6% and rocks at most 4° to alternating sides, never
+spinning on. **Reduce motion** turns the camera moves off. Brightness may rise at most
+10% and changes no faster than 60% per second, so nothing flashes. Tests in
+`src/reactions.rs` enforce all of this.
 
 ### System audio by platform
 

@@ -104,7 +104,7 @@ impl DriftApp {
             flow_t: 0.0,
             ang: 0.0,
             next_at: 3.0,
-            beats_to_shift: 32,
+            beats_to_shift: 8,
             last_drop: -99.0,
             last_frame: Instant::now(),
             flashed: vec![-99.0; n],
@@ -219,6 +219,7 @@ impl DriftApp {
             beat: a.beat && !self.paused,
             weights: &weights,
             energy,
+            period: a.period as f32,
             reduced_motion: self.reduced_motion,
         });
         let active = self.pulse.active();
@@ -235,7 +236,8 @@ impl DriftApp {
                 if a.beat {
                     self.beats_to_shift = self.beats_to_shift.saturating_sub(1);
                     if self.beats_to_shift == 0 {
-                        self.shift(None, Some(a.period * 8.0));
+                        let beats = self.traits.beat_fade();
+                        self.shift(None, Some(a.period * beats));
                         self.beats_to_shift = self.traits.beats_until_next();
                     }
                 }
@@ -265,7 +267,7 @@ impl DriftApp {
             px: size[0] as f32 / logical_w.max(1.0),
             t: self.flow_t as f32,
             clock: sim as f32,
-            ang: self.ang as f32,
+            ang: self.ang as f32 + v.ang_off,
             pat_a: pa as f32,
             pat_b: pb as f32,
             pat_m: pm,

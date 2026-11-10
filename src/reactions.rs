@@ -1,10 +1,11 @@
 //! Turns audio (levels + beats) and the Energy trait into per-frame visual modifiers.
 //!
 //! Two comfort rules shape everything here, and tests enforce them:
-//! - **No camera motion.** Nothing zooms, pans or spins the whole picture on the beat;
-//!   whole-field motion is what triggers motion sickness. Movement is local and
-//!   incoherent: the image wobbles in many directions at once, shapes re-form in eased
-//!   steps on the beat, and motes orbit in place.
+//! - **Gentle camera.** Most movement is local and incoherent: the image wobbles in many
+//!   directions at once, shapes re-form in eased steps on the beat, and motes orbit in
+//!   place. Whole-view zooms and spins happen only at half the tempo (every other beat),
+//!   are small ([`MAX_ZOOM`], [`MAX_SWAY`]) and eased, and Reduce motion turns them off.
+//!   Whole-field motion is what triggers motion sickness, so it is rationed.
 //! - **No flashing.** Brightness may rise at most [`MAX_EXPO`] above normal and changes no
 //!   faster than [`EXPO_SLEW`] per second, well inside photosensitivity guidance.
 
@@ -18,12 +19,18 @@ pub const MAX_EXPO: f32 = 1.10;
 pub const EXPO_SLEW: f32 = 0.6;
 /// How long a beat-stepped re-form takes, in seconds.
 pub const MORPH_EASE: f32 = 0.22;
+/// Deepest half-time zoom: the view scales in by at most this fraction.
+pub const MAX_ZOOM: f32 = 0.06;
+/// Widest half-time sway, in radians (about 4°), alternating left and right.
+pub const MAX_SWAY: f32 = 0.07;
 
 /// Per-frame visual modifiers handed to the renderer.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Visual {
-    /// Always 1.0: kept in the uniforms for the shader, never driven by audio.
+    /// Half-time zoom: 1.0 at rest, down to `1 - MAX_ZOOM` on a hit.
     pub zoom: f32,
+    /// Half-time sway added to the view angle, radians.
+    pub ang_off: f32,
     pub warp_add: f32,
     pub chroma_add: f32,
     pub expo: f32,
@@ -47,6 +54,7 @@ pub struct Visual {
 impl Visual {
     pub const NEUTRAL: Visual = Visual {
         zoom: 1.0,
+        ang_off: 0.0,
         warp_add: 0.0,
         chroma_add: 0.0,
         expo: 1.0,
@@ -83,6 +91,14 @@ pub struct Pulse {
     morph_seed: f32,
     morph_age: f32,
     ambient_step: f32,
+    beats: u64,
+    cam_raw: f32,
+    cam: f32,
+    sway: f32,
+    sway_mid: f32,
+    sway_target: f32,
+    /// Half-time camera hits so far (diagnostics and tests).
+    pub cam_hits: u64,
 }
 
 impl Default for Pulse {
@@ -102,6 +118,13 @@ impl Default for Pulse {
             morph_seed: 0.0,
             morph_age: 10.0,
             ambient_step: 0.0,
+            beats: 0,
+            cam_raw: 0.0,
+            cam: 0.0,
+            sway: 0.0,
+            sway_mid: 0.0,
+            sway_target: MAX_SWAY,
+            cam_hits: 0,
         }
     }
 }
@@ -118,6 +141,8 @@ pub struct FrameInput<'a> {
     pub weights: &'a ReactionWeights,
     /// The Energy trait: ambient motion level without audio, 0..1.
     pub energy: f32,
+    /// Beat period in seconds (used to pace the half-time camera).
+    pub period: f32,
     pub reduced_motion: bool,
 }
 
@@ -149,7 +174,21 @@ impl Pulse {
             self.kick_raw = 1.0;
             self.glow_raw = 1.0;
             self.hue_acc += 0.012;
+            // Camera moves at half tempo: every other beat.
+            self.beats += 1;
+            if self.beats % 2 == 1 {
+                self.cam_raw = 1.0;
+                self.sway_target = -self.sway_target;
+                self.cam_hits += 1;
+            }
         }
+        let period = f.period.clamp(0.25, 1.5);
+        self.cam_raw *= (-dt * 2.0 / period).exp();
+        self.cam += (self.cam_raw - self.cam) * smooth_k(12.0, dt);
+        // Two smoothing stages give an ease-in-out rock rather than a jolt.
+        let k = smooth_k(4.0 / period, dt);
+        self.sway_mid += (self.sway_target - self.sway_mid) * k;
+        self.sway += (self.sway_mid - self.sway) * k;
         self.kick_raw *= (-dt * 5.0).exp();
         self.kick += (self.kick_raw - self.kick) * smooth_k(22.0, dt);
         self.glow_raw *= (-dt * 1.8).exp();
@@ -163,7 +202,8 @@ impl Pulse {
         self.gate += (target - self.gate) * smooth_k(rate, dt);
 
         let g = self.gate;
-        let [w_br, w_pu, w_gl, w_sh, w_hu, w_je, w_mo, w_mt] = *f.weights;
+        let [w_br, w_pu, w_gl, w_sh, w_hu, w_je, w_mo, w_mt, w_zo, w_sp] = *f.weights;
+        let cam = if f.reduced_motion { 0.0 } else { g };
         let (low, mid, high, kk) = (l.low * g, l.mid * g, l.high * g, self.kick * g);
         let e = f.energy.clamp(0.0, 1.0);
 
@@ -198,7 +238,8 @@ impl Pulse {
         self.expo += (expo_target - self.expo).clamp(-max_step, max_step);
 
         Visual {
-            zoom: 1.0,
+            zoom: 1.0 - cam * w_zo.min(1.0) * self.cam * MAX_ZOOM,
+            ang_off: cam * w_sp.min(1.0) * self.sway,
             warp_add: calm * w_br * mid * 0.1,
             chroma_add: w_sh * high * 0.3,
             expo: self.expo,
@@ -228,7 +269,7 @@ mod tests {
     use super::*;
 
     const DT: f32 = 1.0 / 60.0;
-    const ALL: ReactionWeights = [1.0; 8];
+    const ALL: ReactionWeights = [1.0; 10];
 
     fn loud() -> Levels {
         Levels {
@@ -250,6 +291,7 @@ mod tests {
             beat,
             weights: &ALL,
             energy,
+            period: 0.5,
             reduced_motion: false,
         }
     }
@@ -273,6 +315,7 @@ mod tests {
             v = p.frame(input(&quiet, false, false, 0.0));
         }
         assert_eq!(v.zoom, 1.0);
+        assert_eq!(v.ang_off, 0.0);
         assert_eq!(v.expo, 1.0);
         assert_eq!(v.jelly, 0.0);
         assert_eq!(v.motes, 0.0);
@@ -316,10 +359,42 @@ mod tests {
     }
 
     #[test]
-    fn no_camera_motion_ever() {
+    fn camera_moves_at_half_tempo_and_gently() {
         let mut p = Pulse::default();
-        for v in run_music(&mut p, 10.0, 0.33, 1.0) {
+        let vs = run_music(&mut p, 4.0, 0.5, 1.0);
+        assert_eq!(p.cam_hits, 4, "8 beats should give 4 half-time hits");
+        let deepest = vs.iter().map(|v| v.zoom).fold(f32::MAX, f32::min);
+        assert!(deepest < 0.99, "zoom should be visible: {deepest}");
+        assert!(deepest >= 1.0 - MAX_ZOOM - 1e-6, "zoom too deep: {deepest}");
+        for v in &vs {
+            assert!(v.zoom <= 1.0 + 1e-6);
+            assert!(v.ang_off.abs() <= MAX_SWAY + 1e-6, "sway {}", v.ang_off);
+        }
+        // The sway rocks both ways rather than spinning on.
+        assert!(vs.iter().any(|v| v.ang_off > 0.03) && vs.iter().any(|v| v.ang_off < -0.03));
+    }
+
+    #[test]
+    fn camera_eases_instead_of_jumping() {
+        let mut p = Pulse::default();
+        let vs = run_music(&mut p, 6.0, 0.5, 1.0);
+        for w in vs.windows(2) {
+            assert!((w[1].zoom - w[0].zoom).abs() < 0.02, "zoom jump");
+            assert!((w[1].ang_off - w[0].ang_off).abs() < 0.01, "sway jump");
+        }
+    }
+
+    #[test]
+    fn reduced_motion_keeps_the_camera_still() {
+        let l = loud();
+        let mut p = Pulse::default();
+        for i in 0..300 {
+            let v = p.frame(FrameInput {
+                reduced_motion: true,
+                ..input(&l, true, i % 30 == 0, 1.0)
+            });
             assert_eq!(v.zoom, 1.0);
+            assert_eq!(v.ang_off, 0.0);
         }
     }
 
