@@ -18,9 +18,14 @@ Last updated: 2026-11-10.
      flattened out on compressed masters.
   2. Added per-band "punch" (each band against its own average, instant attack).
      The user found it **"too twitchy and less pulse-y"**, so it was removed.
-  3. Now: kick detection is fixed for loud masters, and a single **kick-driven thump**
-     drives the surge, warp and wobble. **The user hasn't yet confirmed how this
-     feels on real music.** If they report on it, tune with the dials below.
+  3. Kick detection fixed for loud masters; a single **kick-driven thump** drives the
+     surge, warp and wobble.
+  4. The user asked for **"more direct" beat tracking**. Measured against true kick
+     times, the visual peaks landed 67–83 ms after the kick. Now the beat clock leads
+     (see Decisions) and peaks land at 33–50 ms, before display latency, which
+     `BEAT_LEAD` offsets. **Not yet confirmed on real music**: the user is testing it
+     locally before cutting the next release. They wrote "0.11"; check whether they
+     mean 0.1.1 or 0.11.0 before bumping `Cargo.toml`.
 - **Trait changes** now go through a shuffle bag (every trait changes once per round,
   never twice in a row). The user asked about "effects"; this assumes they meant the
   trait rows, not the options within the Effect trait. Not confirmed.
@@ -111,6 +116,14 @@ it to the shader. The flow clock `flow_t` advances by the Tempo trait plus
 
   Real kicks score about 0.9–1.0 and bass notes and snare bodies about 0.5–0.7, so
   there is margin. Guarded by `tests/demo_tempo.rs`.
+- **The beat clock leads the thump, confirmed by kicks.** Detection can't report a kick
+  until ~33 ms after it: the onset window plus a 3-hop peak check. Shortening that
+  check to 2 hops lost half the kicks on loud masters, so it stays at 3. The beat
+  clock is phase-accurate to within a frame, so `Pulse` fires the thump on the beat
+  when a kick confirmed the previous beat (`KICK_MATCH` window; a kick just ahead of
+  the beat also counts). A breakdown therefore gets one led thump, then stops. The
+  app also polls beats `BEAT_LEAD` (25 ms) early to offset the frame→screen delay.
+  Hits are polled at the true time, since they can't be early.
 - **Thump, not punch.** Only detected kicks set the thump: not hats, stabs or bass notes,
   and not the predicted beat grid, so breakdowns stay still. Per-band punch reacted to
   everything, which read as twitchy.
@@ -128,23 +141,28 @@ it to the shader. The flow clock `flow_t` advances by the Tempo trait plus
 | Constant | Where | Effect |
 |---|---|---|
 | `THUMP_DECAY` (0.3 beats) | reactions.rs | How long each kick's pulse lasts. Longer is smoother, shorter is snappier |
-| `THUMP_ATTACK` (35/s, ~30 ms) | reactions.rs | How fast the pulse rises. Higher is punchier but risks twitchiness |
+| `THUMP_ATTACK` (60/s, ~17 ms) | reactions.rs | How fast the pulse rises. Higher is punchier but risks twitchiness |
+| `BEAT_LEAD` (25 ms) | analysis.rs | How early beats fire to offset display delay. Raise it if visuals still trail the sound |
+| `KICK_MATCH` (0.1 s) | reactions.rs | How long after a beat a detected kick still confirms it (and lets the next beat lead) |
 | `MAX_SURGE` (3.0) | reactions.rs | How hard kicks push the patterns forward |
 | warp `0.2 * thump`, jelly `0.08 + 0.18 * w_je + 0.1 * w_pu` | `Pulse::frame` | How strongly kicks warp and wobble the picture |
 | `KICK_ON_GRID` / `KICK_OFF_GRID` (0.7 / 0.85) | analysis.rs | Kick strictness. Raise them if bass leaks through; lower them if real kicks are missed |
 | `KICK_REF_TAU` (8 s) | analysis.rs | How fast the kick reference forgets (recovery after a quieter section) |
 
-Baseline from `cargo run --release --example pulse_probe` at this point. "Pulse" is how
-much a signal rises in the 80 ms after a kick, as a share of its range; "peak" is the
-median time from a kick to the signal's peak.
+Baseline from `cargo run --release --example pulse_probe` at this point. Since the "more
+direct" work, the probe measures against the demo's **true kick times** (earlier
+baselines used the detected kick and aren't comparable). "Pulse" is how much a signal
+rises in the 80 ms after a kick, as a share of its range. "Peak" is the median time
+from the kick to the signal's peak, before display latency.
 
-| Signal | Pulse (clean / loud) | Peak (clean) |
-|---|---|---|
-| Kicks found | 64/64, 0 extra (both) | — |
-| thump | 80% / 80% | 33 ms |
-| surge | 73% / 71% | 50 ms |
-| jelly | 71% / 68% | 50 ms |
-| warp_add | 70% / 66% | 50 ms |
+| Signal | Pulse (clean / loud) | Peak | Before (same method) |
+|---|---|---|---|
+| Kicks found | 64/64, 0 extra (both) | hits arrive 33 ms after | — |
+| Beat clock | — | fires 17 ms early (BEAT_LEAD) | 17 ms late |
+| thump | 82% / 81% | 33 ms | 67 ms |
+| surge | 74% / 73% | 33 ms | 83 ms |
+| jelly | 72% / 69% | 50 ms | 83 ms |
+| warp_add | 71% / 68% | 33 ms | 83 ms |
 
 ## Verifying
 
@@ -191,3 +209,7 @@ median time from a kick to the signal's peak.
     v0.1.0 with 7 installers.
   - Website: headless screenshot tool, site generator with a risk register enforced in
     CI, and a Pages workflow. Made the repo public for it (the user's decision).
+  - "More direct" beat tracking: the probe now measures against true kick times. The
+    beat clock leads the thump when kicks confirm it, beats fire early to offset
+    display delay (`BEAT_LEAD`), and the attacks are faster. Peaks moved from 67–83 ms
+    to 33–50 ms after the kick. Awaiting the user's local test, then a release.

@@ -34,8 +34,12 @@ pub const MAX_SURGE: f32 = 3.0;
 /// The thump's fade, as a share of the beat (its time constant): a quick swell on the kick
 /// that is gone well before the next one, so each beat reads as its own pulse.
 pub const THUMP_DECAY: f32 = 0.3;
-/// How fast the thump swells toward a new kick, per second (about 30 ms): rounded, not a jolt.
-pub const THUMP_ATTACK: f32 = 35.0;
+/// How fast the thump swells toward a new kick, per second (about 17 ms): rounded, not a
+/// jolt, but peaking within a couple of frames.
+pub const THUMP_ATTACK: f32 = 60.0;
+/// A detected kick this soon after a beat (seconds) confirms that beat. Detection lands
+/// ~15-50 ms after the sound, the beat clock ~0-17 ms.
+pub const KICK_MATCH: f32 = 0.1;
 
 /// Effect gain at silence-adjacent levels and at the loudest peaks. See [`loudness_gain`].
 pub const MIN_GAIN: f32 = 0.3;
@@ -117,6 +121,15 @@ pub struct Pulse {
     /// bass notes, and not the predicted beat grid, so breakdowns stay still.
     pub thump: f32,
     thump_raw: f32,
+    /// Seconds since the last beat from the beat clock.
+    since_beat: f32,
+    /// A kick confirmed the current beat, and how strong it was. When the previous beat was
+    /// confirmed, the next one thumps on the beat clock instead of waiting for detection.
+    beat_kicked: bool,
+    early_kick: bool,
+    grid_kick: f32,
+    /// Thumps the beat clock led (diagnostics and tests).
+    pub led_thumps: u64,
     expo: f32,
     jelly_t: f64,
     mote_t: f64,
@@ -149,6 +162,11 @@ impl Default for Pulse {
             surge: 0.0,
             thump: 0.0,
             thump_raw: 0.0,
+            since_beat: 10.0,
+            beat_kicked: false,
+            early_kick: false,
+            grid_kick: 0.0,
+            led_thumps: 0,
             expo: 1.0,
             jelly_t: 0.0,
             mote_t: 0.0,
@@ -231,7 +249,19 @@ impl Pulse {
         let calm = if f.reduced_motion { 0.35 } else { 1.0 };
 
         // Envelopes
+        let hits = f.hits;
+        self.since_beat += dt;
         if f.beat {
+            // Lead with the beat clock: it knows where the kick lands ~15-50 ms before
+            // detection can confirm it. Only while kicks keep landing on the grid, so a
+            // breakdown (beat clock still ticking, no kicks) stops after one beat.
+            if self.beat_kicked {
+                self.thump_raw = self.thump_raw.max(self.grid_kick);
+                self.led_thumps += 1;
+            }
+            self.beat_kicked = self.early_kick;
+            self.early_kick = false;
+            self.since_beat = 0.0;
             self.kick_raw = 1.0;
             self.glow_raw = 1.0;
             self.hue_acc += 0.012;
@@ -247,11 +277,19 @@ impl Pulse {
         }
         // Each instrument has its own job. Kicks punch; snares shift color and, when there
         // is a backbeat, set the sway; hats make the motes twinkle.
-        let hits = f.hits;
         let s = f.sound;
         if hits.kick > 0.0 {
             self.kick_raw = self.kick_raw.max(hits.kick);
             self.thump_raw = self.thump_raw.max(hits.kick);
+            let period = f.period.clamp(0.25, 1.5);
+            if self.since_beat < KICK_MATCH {
+                self.beat_kicked = true;
+                self.grid_kick = hits.kick;
+            } else if self.since_beat > period - KICK_MATCH * 0.5 {
+                // Just ahead of the beat clock: it confirms the coming beat.
+                self.early_kick = true;
+                self.grid_kick = hits.kick;
+            }
         }
         if hits.snare > 0.0 {
             self.snare_env = self.snare_env.max(hits.snare);
@@ -279,7 +317,7 @@ impl Pulse {
         self.sway_mid += (self.sway_sign * sway_amp - self.sway_mid) * k;
         self.sway += (self.sway_mid - self.sway) * k;
         self.kick_raw *= (-dt * 5.0).exp();
-        self.kick += (self.kick_raw - self.kick) * smooth_k(22.0, dt);
+        self.kick += (self.kick_raw - self.kick) * smooth_k(40.0, dt);
         self.glow_raw *= (-dt * 1.8).exp();
         self.glow += (self.glow_raw - self.glow) * smooth_k(6.0, dt);
         self.hue += (self.hue_acc - self.hue) * smooth_k(5.0, dt);
@@ -861,6 +899,74 @@ mod tests {
         run_with(&mut p, 4.0, MUSIC, |_| Hits::default());
         assert_eq!(p.thump, 0.0);
         assert_eq!(p.surge, 0.0);
+    }
+
+    /// Beats every 30 frames; kicks detected `delay` frames after each beat while `kicking(beat)`.
+    fn run_grid(
+        p: &mut Pulse,
+        beats: usize,
+        delay: isize,
+        kicking: impl Fn(usize) -> bool,
+    ) -> Vec<f32> {
+        let l = loud();
+        (0..beats * 30)
+            .map(|i| {
+                // The kick belonging to beat `kb` is detected `delay` frames from it.
+                let rel = i as isize - delay;
+                let kb = rel.div_euclid(30) as usize;
+                let kick = rel >= 0 && rel % 30 == 0 && kicking(kb);
+                p.frame(FrameInput {
+                    hits: Hits {
+                        kick: if kick { 1.0 } else { 0.0 },
+                        ..Default::default()
+                    },
+                    ..input(&l, true, i.is_multiple_of(30), 0.5)
+                });
+                p.thump
+            })
+            .collect()
+    }
+
+    #[test]
+    fn the_beat_clock_leads_the_thump_while_kicks_confirm_it() {
+        // Detection lands 3 frames (50 ms) after the beat clock.
+        let mut p = Pulse::default();
+        let thump = run_grid(&mut p, 8, 3, |_| true);
+        // From the second beat on, the thump starts on the beat frame itself.
+        for b in 2..8 {
+            assert!(
+                thump[b * 30] > 0.4,
+                "beat {b}: thump {} on the beat",
+                thump[b * 30]
+            );
+        }
+        assert_eq!(p.led_thumps, 7, "every beat after the first is led");
+        // The first beat had no confirmation yet: it waits for the kick.
+        assert!(thump[0] < 0.01);
+    }
+
+    #[test]
+    fn a_breakdown_stops_the_lead_after_one_beat() {
+        let mut p = Pulse::default();
+        let thump = run_grid(&mut p, 12, 3, |b| b < 6);
+        assert_eq!(
+            p.led_thumps, 6,
+            "beats 1-5 led, plus the first beat of the breakdown"
+        );
+        for b in 7..12 {
+            let peak = thump[b * 30..b * 30 + 30]
+                .iter()
+                .fold(0.0f32, |m, &x| m.max(x));
+            assert!(peak < 0.05, "beat {b} in the breakdown thumped: {peak}");
+        }
+    }
+
+    #[test]
+    fn a_kick_just_ahead_of_the_beat_clock_confirms_its_beat() {
+        // Kicks detected 1 frame before each beat (the clock running slightly late).
+        let mut p = Pulse::default();
+        run_grid(&mut p, 8, -1, |_| true);
+        assert!(p.led_thumps >= 6, "led {}", p.led_thumps);
     }
 
     #[test]

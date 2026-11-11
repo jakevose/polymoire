@@ -10,7 +10,7 @@
 //! a developer machine, not in CI.
 
 use eframe::egui_wgpu::wgpu;
-use polymoire::analysis::Analyzer;
+use polymoire::analysis::{Analyzer, BEAT_LEAD};
 use polymoire::demo::DemoSynth;
 use polymoire::reactions::{FrameInput, Pulse, Sound};
 use polymoire::rng::Rng;
@@ -170,7 +170,7 @@ fn simulate(shot: &Shot) -> Uniforms {
         synth.render(&mut buf);
         an.push(&buf);
         let heard = an.time();
-        let beat = an.poll_beat(heard);
+        let beat = an.poll_beat(heard + BEAT_LEAD);
         let hits = an.poll_hits(heard);
         let (l, r) = (an.levels(), an.rhythm());
         let feats = vibe.features(dt, &l, &r, true);

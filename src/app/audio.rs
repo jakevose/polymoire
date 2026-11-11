@@ -2,7 +2,7 @@
 
 use super::capture::{self, Capture};
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
-use polymoire::analysis::{Analyzer, Hits, Levels, Rhythm};
+use polymoire::analysis::{Analyzer, Hits, Levels, Rhythm, BEAT_LEAD};
 use polymoire::demo::DemoSynth;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
@@ -198,7 +198,7 @@ impl AudioEngine {
         };
         match f.heard_now() {
             Some(heard) => AudioFrame {
-                beat: f.analyzer.poll_beat(heard),
+                beat: f.analyzer.poll_beat(heard + BEAT_LEAD),
                 hits: f.analyzer.poll_hits(heard),
                 levels: f.analyzer.levels(),
                 rhythm: f.analyzer.rhythm(),

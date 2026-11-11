@@ -3,13 +3,16 @@
 //! Runs the demo loop (clean, and through a soft clipper standing in for a loud commercial
 //! master) through the analyzer, vibe and reactions exactly as the app does, then prints:
 //! - kick detection against the demo's true kick times (found / missed / extra), and
+//! - timing: how long after each true kick its hit is delivered, and how far the beat
+//!   clock's beats land from the true grid;
 //! - for each visual signal: its range, how much it rises in the 80 ms after a kick
-//!   ("pulse": higher reads as more on-the-beat), and how long after a kick it peaks.
+//!   ("pulse": higher reads as more on-the-beat), and how long after the true kick it
+//!   peaks (the first frame that hears the kick counts as 0).
 //!
 //! Run with `cargo run --release --example pulse_probe`. Use it before and after tuning a
 //! reaction so the change is measured, not guessed.
 
-use polymoire::analysis::Analyzer;
+use polymoire::analysis::{Analyzer, BEAT_LEAD};
 use polymoire::demo::DemoSynth;
 use polymoire::reactions::{FrameInput, Pulse, Sound};
 use polymoire::vibe::Vibe;
@@ -45,12 +48,14 @@ fn run(label: &str, master: impl Fn(f32) -> f32) {
     ];
     let mut series: Vec<Vec<f32>> = vec![Vec::new(); names.len()];
     let mut kicks = Vec::new();
+    let mut beats = Vec::new();
+    let mut led = 0;
     for f in 0..frames {
         synth.render(&mut buf);
         buf.iter_mut().for_each(|x| *x = master(*x));
         an.push(&buf);
         let heard = an.time();
-        let beat = an.poll_beat(heard);
+        let beat = an.poll_beat(heard + BEAT_LEAD);
         let hits = an.poll_hits(heard);
         let (l, r) = (an.levels(), an.rhythm());
         let dt = 1.0 / FPS;
@@ -79,6 +84,10 @@ fn run(label: &str, master: impl Fn(f32) -> f32) {
         if hits.kick > 0.0 {
             kicks.push((f, heard));
         }
+        if beat {
+            beats.push(heard);
+        }
+        led = pulse.led_thumps;
         let vals = [
             pulse.thump,
             pulse.flow_speed_add(false),
@@ -106,14 +115,50 @@ fn run(label: &str, master: impl Fn(f32) -> f32) {
         kicks.len() - matched,
         an.levels().bpm
     );
+    // Timing against the truth. A frame "hears" audio up to the end of its block, so a
+    // perfect reaction lands 0-17 ms after the kick (one frame).
+    let frame_secs = per_frame as f64 / SR as f64;
+    let ms = |x: f64| (x * 1000.0) as f32;
+    let late_kicks: Vec<f64> = truth.iter().copied().filter(|&t| t > 8.0).collect();
+    let mut hit_delay: Vec<f32> = kicks
+        .iter()
+        .filter_map(|&(_, h)| {
+            late_kicks
+                .iter()
+                .find(|&&k| (0.0..0.08).contains(&(h - k)))
+                .map(|&k| ms(h - k))
+        })
+        .collect();
+    // Beats keep the grid through breakdowns, so compare them with the grid, not the kicks.
+    let mut beat_err: Vec<f32> = beats
+        .iter()
+        .filter(|&&h| h > 8.0)
+        .map(|&h| {
+            let g = (h / 0.5).round() * 0.5;
+            ms(h - g)
+        })
+        .collect();
+    hit_delay.sort_by(f32::total_cmp);
+    beat_err.sort_by(f32::total_cmp);
+    let q = |v: &[f32], p: f32| if v.is_empty() { f32::NAN } else { pct(v, p) };
     println!(
-        "{:<11} {:>7} {:>7} {:>7} {:>7} {:>8}",
+        "kick hits arrive {:.0} ms after the kick (median; p90 {:.0}); beat clock fires {:.0} ms \
+         from the grid (median; p10 {:.0}, p90 {:.0})",
+        q(&hit_delay, 0.5),
+        q(&hit_delay, 0.9),
+        q(&beat_err, 0.5),
+        q(&beat_err, 0.1),
+        q(&beat_err, 0.9)
+    );
+    println!(
+        "thumps led by the beat clock: {led}\n{:<11} {:>7} {:>7} {:>7} {:>7} {:>8}",
         "signal", "p5", "p50", "p95", "pulse", "peak ms"
     );
     let start = (8.0 * FPS) as usize;
-    let at: Vec<usize> = kicks
+    // First frame that hears each true kick.
+    let at: Vec<usize> = late_kicks
         .iter()
-        .map(|&(f, _)| f)
+        .map(|&t| (t / frame_secs).ceil() as usize - 1)
         .filter(|&f| f > start && f + 30 < frames)
         .collect();
     for (name, s) in names.iter().zip(&series) {

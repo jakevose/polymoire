@@ -15,6 +15,11 @@ use std::collections::VecDeque;
 pub const HOP: usize = 256;
 /// RMS level below which we treat the input as silence (about -54 dBFS).
 pub const PRESENCE_RMS: f32 = 0.002;
+/// How far ahead to ask [`Analyzer::poll_beat`] for beats, seconds. A frame computed now
+/// reaches the screen a frame or two later (GPU work, then the display's refresh), so
+/// predicted beats fire this much early to land on screen with the sound. Detected hits
+/// can't be early (they're found after the sound), so they're polled at the true time.
+pub const BEAT_LEAD: f64 = 0.025;
 /// Time constant for rhythm statistics, seconds: how far back "the feel" looks.
 pub const RHYTHM_TAU: f32 = 4.0;
 /// How long the reference kick strength takes to fade, seconds (see `Analyzer::kick_ref`).
