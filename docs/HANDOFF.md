@@ -23,18 +23,18 @@ Last updated: 2026-11-10.
   4. The user asked for **"more direct" beat tracking**. Measured against true kick
      times, the visual peaks landed 67–83 ms after the kick. Now the beat clock leads
      (see Decisions) and peaks land at 33–50 ms, before display latency, which
-     `BEAT_LEAD` offsets. **Not yet confirmed on real music**: the user is testing it
-     locally before cutting the next release. They wrote "0.11"; check whether they
-     mean 0.1.1 or 0.11.0 before bumping `Cargo.toml`.
+     `BEAT_LEAD` offsets. The user tested it locally and approved it; it shipped as
+     v0.1.1.
 - **Trait changes** now go through a shuffle bag (every trait changes once per round,
   never twice in a row). The user asked about "effects"; this assumes they meant the
   trait rows, not the options within the Effect trait. Not confirmed.
 
 ## Releases
 
-- **v0.1.0 was released 2026-11-10** (github.com/jakevose/polymoire/releases/tag/v0.1.0,
-  private repo). For the next release, bump `version` in `Cargo.toml`, then tag `vX.Y.Z`
-  on that commit and push the tag. Run the workflow by hand first if packaging changed.
+- **v0.1.1 released 2026-11-10** with the more direct beat tracking (v0.1.0, the first
+  release, came out the same day). Releases: github.com/jakevose/polymoire/releases.
+  For the next release, bump `version` in `Cargo.toml`, then tag `vX.Y.Z` on that commit
+  and push the tag. Run the workflow by hand first if packaging changed.
 - `.github/workflows/release.yml` builds Linux x64 and arm64 (`.deb`, `.AppImage`),
   Windows x64 (NSIS `.exe`) and macOS arm64 and x64 (`.dmg`). A `v*` tag publishes a
   GitHub release; running it by hand (workflow_dispatch) builds artifacts only.
@@ -212,4 +212,4 @@ from the kick to the signal's peak, before display latency.
   - "More direct" beat tracking: the probe now measures against true kick times. The
     beat clock leads the thump when kicks confirm it, beats fire early to offset
     display delay (`BEAT_LEAD`), and the attacks are faster. Peaks moved from 67–83 ms
-    to 33–50 ms after the kick. Awaiting the user's local test, then a release.
+    to 33–50 ms after the kick. The user tested and approved it; released v0.1.1.

@@ -1,6 +1,6 @@
 [package]
 name = "polymoire"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 rust-version = "1.88"
 description = "A generative visualizer that drifts between looks and moves to whatever your computer is playing."
