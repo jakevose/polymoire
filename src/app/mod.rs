@@ -8,12 +8,13 @@ mod render;
 use audio::{AudioEngine, AudioFrame};
 use eframe::egui;
 use eframe::egui_wgpu;
+use polymoire::director::{Director, Moment};
 use polymoire::quality::Quality;
 use polymoire::reactions::{is_drop, FrameInput, Pulse, Sound, Visual};
 use polymoire::rng::Rng;
 use polymoire::traits::{Key, Traits};
 use polymoire::uniforms::Uniforms;
-use polymoire::vibe::{self, Vibe};
+use polymoire::vibe::{self, Mood, Vibe};
 use std::time::Instant;
 
 pub fn run() -> eframe::Result {
@@ -41,9 +42,7 @@ pub struct PolymoireApp {
     sim: f64,
     flow_t: f64,
     ang: f64,
-    next_at: f64,
-    beats_to_shift: u32,
-    last_drop: f64,
+    director: Director,
     pub vibe: Vibe,
     last_frame: Instant,
     /// Sim time each trait last started changing, for the HUD flash.
@@ -105,9 +104,7 @@ impl PolymoireApp {
             sim: 0.0,
             flow_t: 0.0,
             ang: 0.0,
-            next_at: 3.0,
-            beats_to_shift: 8,
-            last_drop: -99.0,
+            director: Director::new(Rng::from_time()),
             vibe: Vibe::default(),
             last_frame: Instant::now(),
             flashed: vec![-99.0; n],
@@ -198,21 +195,20 @@ impl PolymoireApp {
 
     fn shift(&mut self, n: Option<usize>, dur: Option<f64>) {
         let active = self.pulse.active();
-        // While music drives the picture, its vibe steers what gets picked.
-        let (mood, poly, triplet) = (self.vibe.mood, self.vibe.poly, self.vibe.triplet);
+        // While music drives the picture, its vibe steers what gets picked. Without it, the
+        // picks lean calm (the Ambient mood): silence should settle the picture.
+        let (mood, poly, triplet) = if active {
+            (self.vibe.mood, self.vibe.poly, self.vibe.triplet)
+        } else {
+            (Mood::Ambient, 0.0, 0.0)
+        };
         let changed = self.traits.shift_with(
             self.sim,
             n,
             dur,
             active,
             self.reduced_motion,
-            &|key, name| {
-                if active {
-                    vibe::bias(mood, poly, triplet, key, name)
-                } else {
-                    1.0
-                }
-            },
+            &|key, name| vibe::bias(mood, poly, triplet, key, name),
         );
         for i in changed {
             self.flashed[i] = self.sim;
@@ -235,7 +231,7 @@ impl PolymoireApp {
             let p = self.last_audio.period;
             self.shift(None, Some(p * 4.0));
         } else {
-            self.next_at = self.sim;
+            self.director.shift_now(self.sim);
         }
     }
 
@@ -284,24 +280,16 @@ impl PolymoireApp {
             self.flow_t += dt * (tempo + self.pulse.flow_speed_add(self.reduced_motion) as f64);
             self.ang += dt * self.traits.scalar(Key::Spin, self.sim) as f64 * motion;
 
-            if active {
-                self.next_at = self.next_at.max(self.sim + 4.0);
-                if a.beat {
-                    self.beats_to_shift = self.beats_to_shift.saturating_sub(1);
-                    if self.beats_to_shift == 0 {
-                        let beats = self.traits.beat_fade();
-                        self.shift(None, Some(a.period * beats));
-                        self.beats_to_shift = self.traits.beats_until_next();
-                    }
-                }
-                // A drop or a change of mood brings a bigger scene change.
-                if (is_drop(&a.levels) || mood_changed) && self.sim - self.last_drop > 8.0 {
-                    self.last_drop = self.sim;
-                    self.shift(Some(2), Some(a.period * 4.0));
-                }
-            } else if self.sim >= self.next_at {
-                self.shift(None, None);
-                self.next_at = self.sim + self.traits.next_hold(self.reduced_motion);
+            let cue = self.director.step(Moment {
+                sim: self.sim,
+                music: active,
+                beat: a.beat,
+                period: a.period,
+                big_change: is_drop(&a.levels) || mood_changed,
+                reduced_motion: self.reduced_motion,
+            });
+            if let Some(c) = cue {
+                self.shift(c.n, c.dur);
             }
         }
         self.traits.settle(self.sim);

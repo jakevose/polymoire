@@ -8,6 +8,7 @@
 
 pub mod analysis;
 pub mod demo;
+pub mod director;
 pub mod dsp;
 pub mod quality;
 pub mod reactions;

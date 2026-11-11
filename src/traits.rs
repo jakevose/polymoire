@@ -97,9 +97,9 @@ pub fn catalog() -> Vec<TraitDef> {
             opts: vec![
                 pal("Prism", h, h, one, [0.0, 0.33, 0.67]),
                 pal("Ember", h, h, one, [0.0, 0.1, 0.2]),
-                pal("Coral", h, h, one, [0.3, 0.2, 0.2]),
+                pal("Coral", h, h, one, [0.3, 0.2, 0.1]),
                 pal("Lime", h, h, [1.0, 1.0, 0.5], [0.8, 0.9, 0.3]),
-                pal("Dune", h, h, [1.0, 0.7, 0.4], [0.0, 0.15, 0.2]),
+                pal("Dune", h, h, [1.0, 0.7, 0.4], [0.0, 0.22, 0.4]),
                 pal("Acid", h, h, [2.0, 1.0, 0.0], [0.5, 0.2, 0.25]),
                 pal(
                     "Peach",
@@ -113,21 +113,21 @@ pub fn catalog() -> Vec<TraitDef> {
                     [0.3, 0.4, 0.55],
                     [0.3, 0.35, 0.4],
                     one,
-                    [0.6, 0.55, 0.5],
+                    [0.6, 0.55, 0.7],
                 ),
                 pal(
                     "Nocturne",
                     [0.4, 0.26, 0.5],
                     [0.45, 0.3, 0.45],
                     one,
-                    [0.85, 0.1, 0.3],
+                    [0.85, 0.91, 0.16],
                 ),
                 pal(
                     "Glacier",
                     [0.6, 0.7, 0.8],
-                    [0.3, 0.25, 0.2],
+                    [0.36, 0.3, 0.24],
                     one,
-                    [0.5, 0.55, 0.6],
+                    [0.5, 0.6, 0.7],
                 ),
                 pal(
                     "Moss",
@@ -139,16 +139,16 @@ pub fn catalog() -> Vec<TraitDef> {
                 pal(
                     "Rose",
                     [0.75, 0.55, 0.6],
-                    [0.25, 0.25, 0.25],
+                    [0.28, 0.28, 0.28],
                     one,
-                    [0.0, 0.1, 0.05],
+                    [0.0, 0.15, 0.08],
                 ),
                 pal(
                     "Sunset",
                     [0.6, 0.4, 0.4],
-                    [0.4, 0.3, 0.3],
+                    [0.44, 0.33, 0.33],
                     [1.0, 0.8, 0.6],
-                    [0.0, 0.15, 0.35],
+                    [0.0, 0.22, 0.52],
                 ),
                 pal(
                     "Opal",
@@ -160,30 +160,30 @@ pub fn catalog() -> Vec<TraitDef> {
                 pal(
                     "Vapor",
                     [0.6, 0.5, 0.75],
-                    [0.4, 0.35, 0.25],
+                    [0.4, 0.45, 0.25],
                     one,
-                    [0.9, 0.5, 0.3],
+                    [0.9, 0.6, 0.3],
                 ),
                 pal(
                     "Copper",
                     [0.55, 0.4, 0.3],
                     [0.45, 0.32, 0.25],
                     one,
-                    [0.0, 0.08, 0.15],
+                    [0.0, 0.1, 0.19],
                 ),
                 pal(
                     "Ultraviolet",
                     [0.35, 0.2, 0.55],
                     [0.35, 0.25, 0.45],
                     one,
-                    [0.6, 0.75, 0.95],
+                    [0.6, 0.75, 0.75],
                 ),
                 pal(
                     "Citrus",
                     [0.7, 0.65, 0.3],
-                    [0.3, 0.3, 0.3],
+                    [0.36, 0.36, 0.36],
                     one,
-                    [0.0, 0.08, 0.45],
+                    [0.0, 0.08, 0.35],
                 ),
             ],
         },
@@ -368,6 +368,51 @@ pub fn catalog() -> Vec<TraitDef> {
     ]
 }
 
+/// How much an option tends to flatten the picture: few, similar colors (two-ink effects
+/// and textures, near-monochrome or dark palettes) or soft, featureless structure (smooth
+/// fields, large scales). Each is fine alone; stacked, the scene goes flat. Values come
+/// from `examples/look_probe.rs`: options that showed up in flat looks far more than
+/// average score highest.
+pub fn flatness(key: Key, name: &str) -> f32 {
+    FLATNESS
+        .iter()
+        .find(|&&(k, n, _)| k == key && n == name)
+        .map_or(0.0, |&(_, _, f)| f)
+}
+
+/// The options [`flatness`] scores; every other option scores 0.
+const FLATNESS: &[(Key, &str, f32)] = &[
+    (Key::Effect, "Duotone", 1.0),
+    (Key::Effect, "Ink", 1.0),
+    (Key::Field, "Plasma", 0.8),
+    (Key::Texture, "Riso", 0.8),
+    (Key::Texture, "Paper", 0.6),
+    (Key::Palette, "Nocturne", 0.6),
+    (Key::Palette, "Ultraviolet", 0.6),
+    (Key::Palette, "Abyss", 0.6),
+    (Key::Field, "Quasicrystal", 0.6),
+    (Key::Field, "Marble", 0.6),
+    (Key::Field, "Smoke", 0.6),
+    (Key::Scale, "Vast", 0.6),
+    (Key::Scale, "Wide", 0.6),
+    (Key::Effect, "Thermal", 0.35),
+    (Key::Palette, "Rose", 0.35),
+    (Key::Palette, "Copper", 0.35),
+    (Key::Palette, "Glacier", 0.35),
+    (Key::Palette, "Coral", 0.35),
+    (Key::Palette, "Dune", 0.35),
+    (Key::Palette, "Lime", 0.35),
+    (Key::Palette, "Sunset", 0.35),
+    (Key::Chroma, "Smear", 0.35),
+];
+
+/// The variety guard: past this much combined [`flatness`], automatic picks steer away
+/// from adding more.
+pub const FLAT_BUDGET: f32 = 1.3;
+/// How much less likely an option is when it would take the look past [`FLAT_BUDGET`].
+/// Lower makes flat looks rarer but also hides the two-ink looks (Riso, Duotone, Ink).
+pub const GUARD_WEIGHT: f32 = 0.3;
+
 /// Weighted pick, never returning `exclude`.
 pub fn pick_weighted(opts: &[Opt], exclude: Option<usize>, rng: &mut Rng) -> usize {
     pick_weighted_by(opts, exclude, rng, &|_| 1.0)
@@ -423,6 +468,7 @@ fn lerp(a: f32, b: f32, t: f32) -> f32 {
 /// Most traits one automatic shift takes (drops and moods take two, timed shifts one or two).
 const MAX_PER_SHIFT: usize = 2;
 
+#[derive(Clone)]
 pub struct Traits {
     pub defs: Vec<TraitDef>,
     pub state: Vec<TraitState>,
@@ -434,15 +480,28 @@ pub struct Traits {
     /// The traits that changed most recently (the last shift, plus any arrow clicks since),
     /// kept out of the front of the next bag so a refill never repeats them straight away.
     recent: Vec<usize>,
+    /// Steer automatic picks away from flat looks (see [`flatness`]). On by default; tests
+    /// of the plain shuffle bag turn it off.
+    pub variety_guard: bool,
 }
 
 impl Traits {
     pub fn new(mut rng: Rng) -> Self {
         let defs = catalog();
+        // The opening look gets the variety guard too.
+        let mut flat = 0.0;
         let state = defs
             .iter()
             .map(|d| {
-                let i = pick_weighted(&d.opts, None, &mut rng);
+                let i = pick_weighted_by(&d.opts, None, &mut rng, &|o: &Opt| {
+                    let f = flatness(d.key, o.name);
+                    if f > 0.0 && flat + f > FLAT_BUDGET {
+                        GUARD_WEIGHT
+                    } else {
+                        1.0
+                    }
+                });
+                flat += flatness(d.key, d.opts[i].name);
                 TraitState {
                     from: i,
                     to: i,
@@ -459,6 +518,7 @@ impl Traits {
             rng,
             bag: Vec::new(),
             recent: Vec::new(),
+            variety_guard: true,
         }
     }
 
@@ -624,6 +684,22 @@ impl Traits {
         self.shift_with(sim, n, dur, audio_active, reduced_motion, &|_, _| 1.0)
     }
 
+    /// Combined [`flatness`] of the look the traits are heading to, leaving out trait `skip`.
+    fn flatness_without(&self, skip: usize) -> f32 {
+        (0..self.defs.len())
+            .filter(|&i| i != skip)
+            .map(|i| {
+                let d = &self.defs[i];
+                flatness(d.key, d.opts[self.state[i].to].name)
+            })
+            .sum()
+    }
+
+    /// Combined [`flatness`] of the current look (where it is heading, mid-crossfade).
+    pub fn look_flatness(&self) -> f32 {
+        self.flatness_without(usize::MAX)
+    }
+
     /// Like [`Traits::shift`], with picks weighted by `bias(trait, option name)`.
     pub fn shift_with(
         &mut self,
@@ -644,6 +720,20 @@ impl Traits {
         // nothing left to give, refill it once.
         let mut picks = Vec::new();
         let mut refilled = false;
+        // The variety guard's rescue: a flat look changes the trait that flattens it most
+        // straight away, even if it already had its turn this round (otherwise a flat look
+        // could sit for most of a round). Never something that just changed.
+        if self.variety_guard && self.look_flatness() > FLAT_BUDGET {
+            let flat =
+                |t: &Self, i: usize| flatness(t.defs[i].key, t.defs[i].opts[t.state[i].to].name);
+            let worst = (0..self.defs.len())
+                .filter(|&i| can_move(self, i) && !self.recent.contains(&i) && flat(self, i) > 0.0)
+                .max_by(|&a, &b| flat(self, a).total_cmp(&flat(self, b)));
+            if let Some(i) = worst {
+                self.bag.retain(|&k| k != i);
+                picks.push(i);
+            }
+        }
         while picks.len() < n {
             let next = self
                 .bag
@@ -664,11 +754,24 @@ impl Traits {
         let mut changed = Vec::new();
         for &i in &picks {
             let key = self.defs[i].key;
+            // The variety guard: an option that would push the look past the flatness
+            // budget is much less likely. Options that bring it back under are untouched,
+            // so a flat look tends to recover on its next shift.
+            let rest = self.flatness_without(i);
+            let guard_on = self.variety_guard;
+            let guard = |name: &str| {
+                let over = rest + flatness(key, name) - FLAT_BUDGET;
+                if guard_on && over > 0.0 && flatness(key, name) > 0.0 {
+                    GUARD_WEIGHT
+                } else {
+                    1.0
+                }
+            };
             let to = pick_weighted_by(
                 &self.defs[i].opts,
                 Some(self.state[i].from),
                 &mut self.rng,
-                &|o: &Opt| bias(key, o.name),
+                &|o: &Opt| bias(key, o.name) * guard(o.name),
             );
             let base = dur.unwrap_or_else(|| self.rng.range(2.5, 5.0) as f64);
             let s = &mut self.state[i];
@@ -682,11 +785,6 @@ impl Traits {
             self.recent = changed.clone();
         }
         changed
-    }
-
-    /// Seconds to hold before the next timed shift (used when no audio is playing).
-    pub fn next_hold(&mut self, reduced_motion: bool) -> f64 {
-        self.rng.range(4.0, 8.0) as f64 * if reduced_motion { 2.0 } else { 1.0 }
     }
 
     /// What the HUD shows for trait `i`.
@@ -703,24 +801,6 @@ impl Traits {
             t.push_str(" · needs audio");
         }
         t
-    }
-
-    /// Beats between shifts while music drives the timing.
-    pub fn beats_until_next(&mut self) -> u32 {
-        if self.rng.chance(0.6) {
-            8
-        } else {
-            4
-        }
-    }
-
-    /// Crossfade length, in beats, for shifts that land on the beat.
-    pub fn beat_fade(&mut self) -> f64 {
-        if self.rng.chance(0.5) {
-            2.0
-        } else {
-            4.0
-        }
     }
 }
 
@@ -924,8 +1004,10 @@ mod tests {
 
     #[test]
     fn every_trait_gets_a_turn_before_any_repeats() {
+        // The plain shuffle bag; the variety guard may jump the queue to rescue a flat look.
         for seed in 0..20 {
             let mut t = Traits::new(Rng::new(seed));
+            t.variety_guard = false;
             let n = t.defs.len();
             let flat: Vec<usize> = shifts(&mut t, 120).into_iter().flatten().collect();
             for round in flat.chunks_exact(n) {
@@ -965,6 +1047,7 @@ mod tests {
     #[test]
     fn pinned_traits_keep_their_place_and_the_rest_keep_cycling() {
         let mut t = traits();
+        t.variety_guard = false;
         let p = t.index_of(Key::Palette);
         t.toggle_lock(p);
         let flat: Vec<usize> = shifts(&mut t, 80).into_iter().flatten().collect();
@@ -988,6 +1071,77 @@ mod tests {
         assert!(!t.bag().contains(&next));
         let c = t.shift(30.0, Some(2), None, true, false);
         assert!(!c.contains(&next), "{c:?}");
+    }
+
+    #[test]
+    fn flatness_names_real_options() {
+        let defs = catalog();
+        for &(key, name, f) in FLATNESS {
+            let d = defs.iter().find(|d| d.key == key).expect("trait");
+            assert!(d.opts.iter().any(|o| o.name == name), "{key:?} {name}");
+            assert!(f > 0.0 && f <= 1.0);
+        }
+    }
+
+    /// Share of shifts after which the look is over the flatness budget.
+    fn flat_share(guard: bool) -> f32 {
+        let (mut flat, mut total) = (0, 0);
+        for seed in 0..40 {
+            let mut t = Traits::new(Rng::new(seed));
+            t.variety_guard = guard;
+            for _ in 0..100 {
+                shifts(&mut t, 1);
+                total += 1;
+                flat += (t.look_flatness() > FLAT_BUDGET) as u32;
+            }
+        }
+        flat as f32 / total as f32
+    }
+
+    #[test]
+    fn the_variety_guard_makes_flat_looks_rare() {
+        let (on, off) = (flat_share(true), flat_share(false));
+        assert!(
+            on < off * 0.35,
+            "flat after {:.0}% of shifts, {:.0}% unguarded",
+            on * 100.0,
+            off * 100.0
+        );
+    }
+
+    #[test]
+    fn a_flat_look_changes_its_flattest_trait_next() {
+        let mut t = traits();
+        let set = |t: &mut Traits, key: Key, name: &str| {
+            let i = t.index_of(key);
+            let k = t.defs[i].opts.iter().position(|o| o.name == name).unwrap();
+            t.state[i].from = k;
+            t.state[i].to = k;
+        };
+        set(&mut t, Key::Palette, "Abyss");
+        set(&mut t, Key::Effect, "Duotone");
+        set(&mut t, Key::Field, "Plasma");
+        // Even when the Effect already had its turn this round.
+        let fx = t.index_of(Key::Effect);
+        t.bag.retain(|&i| i != fx);
+        let before = t.look_flatness();
+        let c = t.shift(0.0, Some(1), Some(1.0), true, false);
+        assert_eq!(c, vec![fx]);
+        t.settle(2.0);
+        assert!(t.look_flatness() < before);
+    }
+
+    #[test]
+    fn the_variety_guard_keeps_every_option_reachable() {
+        // Rarer, not gone: the two-ink looks still come up.
+        let mut t = traits();
+        let fx = t.index_of(Key::Effect);
+        let mut seen = vec![false; t.defs[fx].opts.len()];
+        for _ in 0..2000 {
+            shifts(&mut t, 1);
+            seen[t.state[fx].from] = true;
+        }
+        assert!(seen.iter().all(|&s| s), "{seen:?}");
     }
 
     #[test]

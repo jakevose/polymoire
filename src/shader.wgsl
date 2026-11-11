@@ -229,10 +229,26 @@ fn pat(id: i32, p: vec2f) -> f32 {
     return 0.5 + s / 6.0;
 }
 
+// Some fields bunch up around their middle (a standard deviation of 0.16-0.2, against
+// about 0.35 for the sine-based ones), so they only ever showed a slice of the palette:
+// one or two similar colors. Stretch them about their middle to roughly 0.28. Values past
+// 0..1 are fine; the palette is periodic. Measured with `examples/look_probe.rs`.
+fn spread(id: i32, v: f32) -> f32 {
+    if (id == 0) { return 0.45 + (v - 0.45) * 1.7; } // Smoke
+    if (id == 4) { return 0.5 + (v - 0.5) * 1.5; } // Plasma
+    if (id == 6) { return 0.5 + (v - 0.5) * 1.8; } // Quasicrystal
+    if (id == 8) { return 0.44 + (v - 0.44) * 1.6; } // Ridges
+    if (id == 9) { return 0.55 + (v - 0.67) * 1.5; } // Truchet
+    if (id == 13) { return 0.5 + (v - 0.5) * 1.4; } // Interference
+    return v;
+}
+
 fn field(p: vec2f) -> f32 {
-    var a = pat(i32(u.pat_a + 0.5), p);
+    let ia = i32(u.pat_a + 0.5);
+    var a = spread(ia, pat(ia, p));
     if (u.pat_m > 0.001) {
-        a = mix(a, pat(i32(u.pat_b + 0.5), p), u.pat_m);
+        let ib = i32(u.pat_b + 0.5);
+        a = mix(a, spread(ib, pat(ib, p)), u.pat_m);
     }
     return a;
 }
@@ -255,7 +271,10 @@ fn fx(id: i32, c: vec3f, x: f32) -> vec3f {
     }
     if (id == 4) { // E4 Duotone
         let l = lum(c);
-        return mix(pal(0.05) * 0.18, pal(0.72) * 1.1, smoothstep(0.12, 0.88, l));
+        // Lift the light ink on dark palettes, or the two tones turn murky.
+        let hi = pal(0.72);
+        let lift = max(1.1, 0.6 / max(lum(hi), 0.1));
+        return mix(pal(0.05) * 0.18, hi * lift, smoothstep(0.12, 0.88, l));
     }
     if (id == 5) { // E5 Invert bands
         return mix(c, 1.0 - c, step(0.5, fract(x * 3.0 + u.clock * 0.03)));
@@ -354,10 +373,12 @@ fn tex(id: i32, c: vec3f, fc: vec2f) -> vec3f {
     }
     if (id == 10) { // T10 Riso: two inks on cream stock, with grain
         let l = lum(c);
+        // Shadows in a dark ink, midtones in a second ink from across the palette.
         let ink1 = pal(0.15);
+        let ink2 = pal(0.62);
         let a = smoothstep(0.25, 0.6, l + (h21(fc * 0.73) - 0.5) * 0.25);
         let b = smoothstep(0.6, 0.9, l + (h21(fc * 0.71 + 3.0) - 0.5) * 0.25);
-        let base = mix(ink1 * 0.3 + 0.04, ink1, a);
+        let base = mix(ink1 * 0.3 + 0.04, ink2, a);
         return mix(base, vec3f(0.95, 0.93, 0.88), b * 0.8);
     }
     if (id == 11) { // T11 Engrave: line weight follows darkness
