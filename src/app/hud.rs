@@ -107,10 +107,8 @@ fn panel(ui: &mut egui::Ui, app: &mut PolymoireApp, compact: bool) {
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             let meta = if app.paused {
                 "paused".to_string()
-            } else if active {
-                format!("on the beat · {}", app.beats_to_shift)
             } else {
-                format!("next shift {:.1}s", (app.next_at - app.sim).max(0.0))
+                app.director.describe(app.sim, active)
             };
             ui.label(egui::RichText::new(meta).font(mono(9.5)).color(DIM));
         });

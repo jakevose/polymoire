@@ -4,7 +4,7 @@ What a new session needs to pick up the work: where things stand, why things are
 they are, and what is still open. The code and git history say *what*; this file says
 *why* and *what's next*. Keep it current (see `CLAUDE.md`).
 
-Last updated: 2026-11-10.
+Last updated: 2026-11-11.
 
 ## Where things stand
 
@@ -25,12 +25,26 @@ Last updated: 2026-11-10.
      (see Decisions) and peaks land at 33–50 ms, before display latency, which
      `BEAT_LEAD` offsets. The user tested it locally and approved it; it shipped as
      v0.1.1.
+- **v0.1.2 (in review as a PR, not yet tagged)** fixes two user reports:
+  1. *"If system audio stops, the app may enter a desperation phase of rapid visualizer
+     shifting."* Simulated (`tests/music_stops.rs`): after the music stopped, the old
+     timer kept shifting 1-2 traits every 4-8 s with unbiased picks (Electric energy as
+     likely as Calm), and a mood or drop shift could land right on top of a beat shift.
+     A faint noise floor instead froze the look (gate open, tempo lost, so no beats and no
+     timer). The exact burst the user saw wasn't reproduced; this is the closest mechanism
+     found. Now `src/director.rs` owns the pacing (see Decisions). **Ask the user whether
+     it's fixed on their machine.**
+  2. *"Too much time with only a couple of similar colors and a fairly flat, blurry
+     scene."* Measured with `examples/look_probe.rs`: 23% of on-screen looks were flat.
+     Now 6% (see Decisions and the baseline below).
 - **Trait changes** now go through a shuffle bag (every trait changes once per round,
   never twice in a row). The user asked about "effects"; this assumes they meant the
   trait rows, not the options within the Effect trait. Not confirmed.
 
 ## Releases
 
+- **v0.1.2:** the version is bumped in the PR. After the user approves and it merges, tag
+  the merge commit `v0.1.2` and push the tag.
 - **v0.1.1 released 2026-11-10** with the more direct beat tracking (v0.1.0, the first
   release, came out the same day). Releases: github.com/jakevose/polymoire/releases.
   For the next release, bump `version` in `Cargo.toml`, then tag `vX.Y.Z` on that commit
@@ -85,11 +99,15 @@ Last updated: 2026-11-10.
 | `src/tempo.rs` | Autocorrelation tempo and beat phase |
 | `src/vibe.rs` | Intensity, heaviness, mood, `level` (loudness against the last minute) |
 | `src/reactions.rs` | `Pulse::frame`: audio → per-frame `Visual` modifiers. Comfort rules live here |
-| `src/traits.rs` | Trait catalog, crossfades, shuffle-bag scheduling |
+| `src/traits.rs` | Trait catalog, crossfades, shuffle-bag scheduling, variety guard (`flatness`) |
+| `src/director.rs` | *When* shifts happen: on the beat with music, a slow drift without it |
 | `src/shader.wgsl` / `src/uniforms.rs` | Rendering; the uniform layout is checked against the WGSL by `tests/shader.rs` |
 | `src/demo.rs` | 120 bpm house loop. **The only ground truth for the analysis tests** |
 | `src/app/` | Window, audio devices, HUD, frame loop (`mod.rs::step`) |
 | `examples/pulse_probe.rs` | Measures kick accuracy and how well each visual signal pulses |
+| `examples/look_probe.rs` | Renders the scheduler's looks on the GPU and measures how often they're flat |
+| `examples/common/headless.rs` | Headless scene rendering shared by `screenshots` and `look_probe` |
+| `tests/music_stops.rs` | Demo, then the audio stops three ways; the picture must settle |
 
 The frame loop: `AudioEngine::frame` polls beats and hits at the time the listener is
 hearing, then `Vibe` and `Pulse::frame` turn them into a `Visual`, and `uniforms()` sends
@@ -136,6 +154,30 @@ it to the shader. The flow clock `flow_t` advances by the Tempo trait plus
   kept out of the front for the rest of the current shift plus a full next shift. An
   arrow click counts as that trait's turn.
 
+- **Pacing without music is a comfort rule (`src/director.rs`).** With music: shifts on
+  the beat every 4 or 8 beats, never two within `MIN_GAP`; a drop or mood change restarts
+  the beat count so it doesn't stack. Music without a beat drifts on a 7-11 s timer (it
+  used to freeze). Without music: hold still `SETTLE` (12 s), then one trait every 12-20 s
+  with 6-9 s crossfades, picks biased to the Ambient mood (calm energy, slow tempo).
+  Reduce motion doubles the holds. Startup without audio still makes its first change at
+  3 s so the app visibly comes alive.
+- **Flat looks: fix the causes, then guard the combinations.**
+  - Six fields (Smoke, Plasma, Quasicrystal, Ridges, Truchet, Interference) bunched
+    around their middle and only ever showed a slice of the palette. `spread()` in the
+    shader stretches them to about the spread of the sine-based fields.
+  - Ten palettes were near-monochrome or low-contrast in their middle. Their phase and
+    amplitude were nudged (base color kept, so each keeps its identity), found by a small
+    search against a hue and contrast floor.
+  - Riso now prints with two inks; Duotone lifts its light ink on dark palettes.
+  - The **variety guard** (`flatness()` table in `traits.rs`): options that flatten
+    (two-ink effects, dark or mono palettes, smooth fields, big scales) are fine alone but
+    not stacked. Picks that would push the look past `FLAT_BUDGET` are `GUARD_WEIGHT`
+    times as likely, and a look already over budget changes its flattest trait next,
+    even out of its turn (never twice in a row). That is the one exception to "every trait
+    once per round". Without it, a flat look could sit for most of a round (30-60 s).
+  - Guarded options get rarer, not gone: Duotone and Ink are on screen about 2% of the
+    time (a fair share is ~7%), Riso about 3%.
+
 ## Tuning dials
 
 | Constant | Where | Effect |
@@ -148,6 +190,10 @@ it to the shader. The flow clock `flow_t` advances by the Tempo trait plus
 | warp `0.2 * thump`, jelly `0.08 + 0.18 * w_je + 0.1 * w_pu` | `Pulse::frame` | How strongly kicks warp and wobble the picture |
 | `KICK_ON_GRID` / `KICK_OFF_GRID` (0.7 / 0.85) | analysis.rs | Kick strictness. Raise them if bass leaks through; lower them if real kicks are missed |
 | `KICK_REF_TAU` (8 s) | analysis.rs | How fast the kick reference forgets (recovery after a quieter section) |
+| `SETTLE` (12 s), `IDLE_HOLD` (12-20 s), `IDLE_FADE` (6-9 s) | director.rs | How calm the picture is without music |
+| `MIN_GAP` (2 s), `DRIFT_HOLD` (7-11 s) | director.rs | Shortest gap between shifts with music; pacing for beatless music |
+| `FLAT_BUDGET` (1.3), `GUARD_WEIGHT` (0.3) | traits.rs | Variety guard. Lower budget or weight means fewer flat looks but rarer two-ink looks |
+| `spread()` factors | shader.wgsl | How much of the palette the narrow fields reach |
 
 Baseline from `cargo run --release --example pulse_probe` at this point. Since the "more
 direct" work, the probe measures against the demo's **true kick times** (earlier
@@ -164,6 +210,15 @@ from the kick to the signal's peak, before display latency.
 | jelly | 72% / 69% | 50 ms | 83 ms |
 | warp_add | 71% / 68% | 33 ms | 83 ms |
 
+Look baseline from `cargo run --release --example look_probe` (1500 looks from the
+scheduler, 30 runs). *Flat* means dull (fewer than 2.5 effective hues and contrast < 0.15
+or detail < 0.09) or blurry (detail < 0.06), thresholds set by eye on contact sheets.
+
+| | Flat | Dull | Blurry | Median hues |
+|---|---|---|---|---|
+| v0.1.1 | 23.3% | 18.3% | 13.9% | 3.3 |
+| v0.1.2 | 6.3% | 2.5% | 4.5% | 4.6 |
+
 ## Verifying
 
 - `mise run ci` runs the formatting check, clippy and tests (what CI runs), on the Rust
@@ -171,6 +226,8 @@ from the kick to the signal's peak, before display latency.
   clippy missed a `manual_range_contains` lint that 1.97 fails on.
 - `cargo run --release --example pulse_probe` measures the pulse. Compare against the
   baseline above when tuning.
+- `cargo run --release --example look_probe` measures how often looks are flat (needs a
+  GPU). `LOOK_SAVE=<dir>` saves frames to eyeball; add `LOOK_FLAT=1` for flat ones only.
 - `mise run smoke` opens a window for 20 s and **plays the demo beat on the speakers**.
 - On macOS, system audio needs the app bundle: `mise run app` / `mise run app-smoke`.
 - `scripts/dev-runner.sh` lets a sandboxed tool run allowlisted `mise` tasks through
@@ -180,6 +237,10 @@ from the kick to the signal's peak, before display latency.
 
 ## Open items
 
+- Confirm with the user that the silence fix matches what they saw, and that the looks
+  feel less flat in practice (the probe's thresholds are a proxy).
+- Plasma is still the field most often in the remaining flat looks (soft by nature). If
+  it keeps coming up, raise its frequencies.
 - Confirm the thump on real tracks, then tune the dials.
 - If no kicks are detected (ambient music, or 808 hip-hop where kick and bass merge),
   nothing produces a pulse. Consider a fallback, e.g. low-band onsets when there have
@@ -213,3 +274,11 @@ from the kick to the signal's peak, before display latency.
     beat clock leads the thump when kicks confirm it, beats fire early to offset
     display delay (`BEAT_LEAD`), and the attacks are faster. Peaks moved from 67–83 ms
     to 33–50 ms after the kick. The user tested and approved it; released v0.1.1.
+- **2026-11-11**
+  - User reports: rapid shifting after system audio stops; too much time in flat looks.
+  - Moved shift pacing into `src/director.rs` with a calm idle drift, `MIN_GAP`, and a
+    beatless-music timer; end-to-end test `tests/music_stops.rs`.
+  - Built `examples/look_probe.rs`. Fixed narrow fields and palettes, two-ink Riso,
+    lifted Duotone, and added the variety guard: flat looks 23% → 6%.
+  - Work went to a PR for the user's review (their request) instead of straight to
+    `main`; v0.1.2 to be tagged after merge.

@@ -13,7 +13,11 @@ chroma, mosaic) and moves to whatever your computer is playing.
 - **Demo beat.** A built-in 120 bpm house loop; toggle it with the button or `D`.
 - **Every trait gets a turn.** Automatic changes walk through all the traits in a
   shuffled order, one or two at a time, before any changes again, and never change the
-  same trait twice in a row.
+  same trait twice in a row. The one exception keeps the picture from going flat: if the
+  look has drifted into a couple of similar colors or soft, featureless blobs, the trait
+  most to blame changes next.
+- **When the music stops, the picture settles.** It holds still for about 12 seconds,
+  then drifts one trait at a time every 12 to 20 seconds, leaning toward calm looks.
 - **Change a trait** with the ◀ ▶ arrows on its row; **pin it** with the dot on the right
   so it stops changing on its own (the arrows still work on pinned traits).
 - **Energy** sets how lively the picture is even without music: Calm, Lively, Restless,
