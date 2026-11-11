@@ -43,8 +43,7 @@ Last updated: 2026-11-11.
 
 ## Releases
 
-- **v0.1.2:** the version is bumped in the PR. After the user approves and it merges, tag
-  the merge commit `v0.1.2` and push the tag.
+- **v0.1.2 released 2026-11-11** (PR #1): settles when the music stops; fewer flat looks.
 - **v0.1.1 released 2026-11-10** with the more direct beat tracking (v0.1.0, the first
   release, came out the same day). Releases: github.com/jakevose/polymoire/releases.
   For the next release, bump `version` in `Cargo.toml`, then tag `vX.Y.Z` on that commit
@@ -282,3 +281,4 @@ or detail < 0.09) or blurry (detail < 0.06), thresholds set by eye on contact sh
     lifted Duotone, and added the variety guard: flat looks 23% → 6%.
   - Work went to a PR for the user's review (their request) instead of straight to
     `main`; v0.1.2 to be tagged after merge.
+  - User approved and merged PR #1; tagged `v0.1.2` on the merge commit.
