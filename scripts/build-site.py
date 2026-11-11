@@ -84,6 +84,12 @@ def repo_slug():
     return m.group(1) if m else DEFAULT_REPO
 
 
+def site_url(slug):
+    """Absolute URL of the published site (link previews need absolute image URLs)."""
+    owner, _, repo = slug.partition("/")
+    return f"https://{owner.lower()}.github.io/{repo}/"
+
+
 def direct_deps(manifest):
     """{name: scope} for every dependency declared in Cargo.toml."""
     deps = {}
@@ -346,6 +352,7 @@ def build(args):
         "version": esc(tag),
         "repo": esc(slug),
         "repo_url": f"https://github.com/{esc(slug)}",
+        "site_url": esc(site_url(slug)),
         "downloads": downloads,
         "gallery": gallery_html(shots, out, args.check),
         "deps": deps_html(manifest, register, lock_versions(), trees, per_dep),
@@ -361,6 +368,9 @@ def build(args):
         raise SiteError("unfilled placeholders in site/index.html: " + ", ".join(left))
     (out / "index.html").write_text(page)
     shutil.copy2(SITE / "style.css", out / "style.css")
+    if not (SITE / "og.jpg").exists():
+        raise SiteError("site/og.jpg is missing (run `mise run screenshots`)")
+    shutil.copy2(SITE / "og.jpg", out / "og.jpg")
     shutil.copy2(ROOT / "packaging" / "icons" / "64x64.png", out / "icon.png")
     shutil.copy2(ROOT / "packaging" / "icons" / "256x256.png", out / "icon-256.png")
     (out / ".nojekyll").write_text("")

@@ -65,6 +65,10 @@ Last updated: 2026-11-10.
   captures 3 frames after a kick. It shares `Uniforms::for_frame` with the app, so frames
   match what the app draws. Needs a GPU, so it runs locally, not in CI; the results are
   committed as WebP.
+- **Link previews** (Slack and social sites) use `site/og.jpg`: a 1200×630 JPEG cropped by
+  `scripts/compress-screenshots.py`, referenced by absolute URL. Previewers ignore
+  relative URLs and often WebP; the first version had both problems and showed a blank
+  image.
 - `tokio` appears in `Cargo.lock` only through `wasm-bindgen-futures` (web builds), not
   in desktop builds.
 
