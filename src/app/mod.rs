@@ -12,7 +12,7 @@ use audio::{AudioEngine, AudioFrame, Tap};
 use eframe::egui;
 use eframe::egui_wgpu;
 use library::Library;
-use polymoire::director::{Director, Moment};
+use polymoire::director::{Director, Halt, Moment};
 use polymoire::quality::Quality;
 use polymoire::reactions::{is_drop, FrameInput, Pulse, Sound, Visual};
 use polymoire::rng::Rng;
@@ -57,6 +57,8 @@ pub struct PolymoireApp {
     /// track's sound arrives, so the gap doesn't play out as a slow drift.
     held: bool,
     last_track: Option<String>,
+    /// Eases the picture to a stop in silence and back when sound returns.
+    halt: Halt,
     pub hud_visible: bool,
     pub reduced_motion: bool,
     pub fullscreen: bool,
@@ -122,6 +124,7 @@ impl PolymoireApp {
             paused: false,
             held: false,
             last_track: None,
+            halt: Halt::default(),
             hud_visible: true,
             reduced_motion: false,
             fullscreen: false,
@@ -278,6 +281,12 @@ impl PolymoireApp {
         } else {
             self.held = false;
         }
+        // A player hold isn't silence; otherwise the picture eases to a stop when sound
+        // has been gone a second, and the motion below runs at this speed.
+        let speed = self
+            .halt
+            .step(dt as f32, self.held || (a.live && a.levels.present)) as f64;
+        let vdt = dt * speed;
         // While held, everything carries on from the last sound heard, not the silence.
         let a = if self.held {
             AudioFrame {
@@ -288,7 +297,7 @@ impl PolymoireApp {
         } else {
             a
         };
-        let frozen = self.paused || self.held;
+        let frozen = self.paused || self.held || self.halt.stopped();
         let weights = self.traits.reaction(self.sim);
         let mood_changed = !self.held && {
             let feats = self.vibe.features(dt as f32, &a.levels, &a.rhythm, a.live);
@@ -309,7 +318,7 @@ impl PolymoireApp {
         };
         self.visual = self.pulse.frame(FrameInput {
             // Pausing freezes the picture, including its local motion.
-            dt: if frozen { 0.0 } else { dt as f32 },
+            dt: if frozen { 0.0 } else { vdt as f32 },
             levels: &a.levels,
             live: a.live,
             beat: a.beat && !frozen,
@@ -324,10 +333,10 @@ impl PolymoireApp {
         let motion = if self.reduced_motion { 0.35 } else { 1.0 };
 
         if !frozen {
-            self.sim += dt;
+            self.sim += vdt;
             let tempo = self.traits.scalar(Key::Tempo, self.sim) as f64 * motion;
-            self.flow_t += dt * (tempo + self.pulse.flow_speed_add(self.reduced_motion) as f64);
-            self.ang += dt * self.traits.scalar(Key::Spin, self.sim) as f64 * motion;
+            self.flow_t += vdt * (tempo + self.pulse.flow_speed_add(self.reduced_motion) as f64);
+            self.ang += vdt * self.traits.scalar(Key::Spin, self.sim) as f64 * motion;
 
             let cue = self.director.step(Moment {
                 sim: self.sim,

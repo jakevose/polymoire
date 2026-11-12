@@ -20,8 +20,10 @@ itself from your Dropbox.
   same trait twice in a row. The one exception keeps the picture from going flat: if the
   look has drifted into a couple of similar colors or soft, featureless blobs, the trait
   most to blame changes next.
-- **When the music stops, the picture settles.** It holds still for about 12 seconds,
-  then drifts one trait at a time every 12 to 20 seconds, leaning toward calm looks.
+- **When the music stops, the picture comes to rest.** After a second of silence (or
+  sound too faint to count, like the tail of a fade), all motion eases to a stop over
+  two seconds and waits. When sound comes back, it picks up again within half a
+  second. A faint but steady noise floor keeps a slow drift instead.
 - **Change a trait** with the ◀ ▶ arrows on its row; **pin it** with the dot on the right
   so it stops changing on its own (the arrows still work on pinned traits).
 - **Energy** sets how lively the picture is even without music: Calm, Lively, Restless,

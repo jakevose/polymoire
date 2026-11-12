@@ -110,7 +110,7 @@ Last updated: 2026-11-11 (media player branch).
 | `src/vibe.rs` | Intensity, heaviness, mood, `level` (loudness against the last minute) |
 | `src/reactions.rs` | `Pulse::frame`: audio → per-frame `Visual` modifiers. Comfort rules live here |
 | `src/traits.rs` | Trait catalog, crossfades, shuffle-bag scheduling, variety guard (`flatness`) |
-| `src/director.rs` | *When* shifts happen: on the beat with music, a slow drift without it |
+| `src/director.rs` | *When* shifts happen: on the beat with music, a slow drift without it; `Halt` stops everything in silence |
 | `src/shader.wgsl` / `src/uniforms.rs` | Rendering; the uniform layout is checked against the WGSL by `tests/shader.rs` |
 | `src/demo.rs` | 120 bpm house loop. **The only ground truth for the analysis tests** |
 | `src/app/` | Window, audio devices, HUD, frame loop (`mod.rs::step`) |
@@ -256,6 +256,16 @@ it to the shader. The flow clock `flow_t` advances by the Tempo trait plus
     new full scan. Retries rate limits and dropped connections, not refusals.
   - *Sign-in:* PKCE with a pasted code (no loopback server). Refresh token stored in
     plain text in `settings.json`.
+
+- **Silence stops the picture (`Halt`, user request 2026-11-12).** After 1 s without
+  sound (not live, or below `PRESENCE_RMS`), the frame loop's motion speed eases to 0
+  over 2 s (smoothstep) and stays there; sound back for 0.25 s brings it up in 0.5 s.
+  The 0.25 s guards against tails hovering at the presence threshold, which flicker
+  `present` (no hysteresis in the analyzer) and were the likely "rapid effect" the user
+  saw as levels fell toward zero. This supersedes the settle-then-drift idle for real
+  silence; a steady noise floor above the threshold still drifts (`music_stops` tests
+  still pass since they run the director directly). A player hold counts as sound.
+  Side effect: with no audio at launch the picture comes to rest after ~3 s.
 
 ## Tuning dials
 
@@ -422,3 +432,7 @@ beats within 15 ms.
     `examples/library_probe.rs`.
   - User: loves the new beat tracking; pausing/resuming the player made the picture go
     crazy. The player pause now holds the picture and keeps the analysis state.
+  - User: still a rapid effect as the level falls toward zero; asked to fade to a stop
+    after a second of silence. Added `Halt` (with threshold-flicker guard). A fade-out
+    simulation of the demo showed reactions themselves decay smoothly, so the flicker
+    at the presence threshold is the suspect; confirm with the user.

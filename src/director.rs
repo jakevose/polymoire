@@ -172,6 +172,63 @@ impl Director {
     }
 }
 
+/// Silence this long (seconds) brings the picture to a stop...
+pub const STOP_AFTER: f32 = 1.0;
+/// ...easing down over this long...
+pub const STOP_FADE: f32 = 2.0;
+/// ...and back up this fast when sound returns...
+pub const START_FADE: f32 = 0.5;
+/// ...once it has been back this long. A tail hovering at the presence threshold
+/// flickers in and out; that counts as silence, not as sound returning.
+pub const SOUND_FOR: f32 = 0.25;
+
+/// Brings everything to a gentle stop when the sound goes away, and starts it again
+/// when it comes back (the user's request: near-silent tails made the picture twitch,
+/// and a still picture is calmer than a drift).
+#[derive(Debug)]
+pub struct Halt {
+    silent_for: f32,
+    heard_for: f32,
+    /// 1 = full speed, 0 = stopped (linear; `speed` eases it).
+    run: f32,
+}
+
+impl Default for Halt {
+    fn default() -> Self {
+        Halt {
+            silent_for: 0.0,
+            heard_for: SOUND_FOR,
+            run: 1.0,
+        }
+    }
+}
+
+impl Halt {
+    /// Advance one frame. `sound`: audio is arriving and above the presence threshold.
+    /// Returns the speed to run the picture at, 0..=1.
+    pub fn step(&mut self, dt: f32, sound: bool) -> f32 {
+        self.heard_for = if sound { self.heard_for + dt } else { 0.0 };
+        let back = self.heard_for >= SOUND_FOR;
+        self.silent_for = if back { 0.0 } else { self.silent_for + dt };
+        if self.silent_for > STOP_AFTER {
+            self.run = (self.run - dt / STOP_FADE).max(0.0);
+        } else if back {
+            self.run = (self.run + dt / START_FADE).min(1.0);
+        }
+        self.speed()
+    }
+
+    /// Smoothstep of the ramp, so motion eases out and in rather than braking.
+    pub fn speed(&self) -> f32 {
+        let x = self.run;
+        x * x * (3.0 - 2.0 * x)
+    }
+
+    pub fn stopped(&self) -> bool {
+        self.run <= 0.0
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -313,5 +370,43 @@ mod tests {
         let na = run(&mut a, 0.0, 600.0, false, None, false).len();
         let nb = run(&mut b, 0.0, 600.0, false, None, true).len();
         assert!(nb * 2 <= na + 1, "{na} vs {nb}");
+    }
+
+    #[test]
+    fn silence_eases_to_a_stop_and_sound_starts_it_again() {
+        let mut h = Halt::default();
+        let dt = 1.0 / 60.0;
+        let mut t = 0.0;
+        let mut last = 1.0;
+        // A second of silence changes nothing yet.
+        while t < STOP_AFTER - 0.05 {
+            assert_eq!(h.step(dt, false), 1.0);
+            t += dt;
+        }
+        // Then a smooth, monotonic slowdown to a full stop.
+        let mut biggest_step: f32 = 0.0;
+        while !h.stopped() {
+            let v = h.step(dt, false);
+            assert!(v <= last);
+            biggest_step = biggest_step.max(last - v);
+            last = v;
+            t += dt;
+            assert!(t < STOP_AFTER + STOP_FADE + 0.5, "never stopped");
+        }
+        assert!(biggest_step < 0.02, "slowed too abruptly: {biggest_step}");
+        // Flickering at the threshold doesn't start it.
+        for i in 0..120 {
+            assert_eq!(h.step(dt, i % 6 < 3), 0.0);
+        }
+        // Sound that stays starts it moving again, gently.
+        let mut v = 0.0;
+        for _ in 0..(SOUND_FOR * 60.0) as usize + 1 {
+            v = h.step(dt, true);
+        }
+        assert!(v > 0.0 && v < 0.05, "{v}");
+        for _ in 0..(START_FADE * 60.0) as usize + 2 {
+            h.step(dt, true);
+        }
+        assert_eq!(h.speed(), 1.0);
     }
 }
