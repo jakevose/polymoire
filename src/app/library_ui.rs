@@ -131,8 +131,16 @@ fn folder_picker(ui: &mut egui::Ui, lib: &mut Library) {
         let shown = if path.is_empty() { "Dropbox" } else { &path };
         ui.add(egui::Label::new(label(shown)).truncate());
     });
+    // Only a folder Dropbox actually listed can become the library.
+    let listed = matches!(
+        lib.browse.as_ref().and_then(|b| b.folders.as_ref()),
+        Some(Ok(_))
+    );
     ui.horizontal(|ui| {
-        if pill(ui, "Use this folder", true).clicked() {
+        let r = ui
+            .add_enabled_ui(listed, |ui| pill(ui, "Use this folder", true))
+            .inner;
+        if r.clicked() {
             lib.choose_root(&path);
         }
         if lib.settings.root.is_some() && pill(ui, "Cancel", false).clicked() {

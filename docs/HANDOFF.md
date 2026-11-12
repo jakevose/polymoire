@@ -44,7 +44,10 @@ Last updated: 2026-11-11 (media player branch).
   account; the folder listing then failed with a bare "http status: 400". Fixed blind
   (no account here): JSON calls now send exactly `application/json` (ureq adds
   `; charset=utf-8`), and every error shows Dropbox's own explanation. **Ask whether
-  the folder list works now; if not, the new message says why.**
+  the folder list works now; if not, the new message says why.** The surfaced error
+  showed the real cause: the user's Dropbox app lacked the `files.metadata.read` scope
+  (the content type wasn't the problem). Scopes are fixed when the token is granted, so
+  enabling one in the App Console also needs Disconnect then Connect.
 - **Trait changes** now go through a shuffle bag (every trait changes once per round,
   never twice in a row). The user asked about "effects"; this assumes they meant the
   trait rows, not the options within the Effect trait. Not confirmed.
@@ -354,3 +357,6 @@ error against the true grid):
     encoded to mp3: 1.7 ms median), system-audio/player toggle. Not run against Dropbox.
   - User test: sign-in works; listing folders failed with HTTP 400. Sent the exact JSON
     content type and surfaced Dropbox's error text for every call.
+  - The real 400 was a missing app scope (`files.metadata.read`). "Use this folder" is
+    now disabled until Dropbox has listed the folder (it had let a failed listing set
+    the whole Dropbox as the library).
