@@ -8,7 +8,7 @@
 use super::audio::{Feed, SharedFeed};
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use polymoire::beatmap::BeatMap;
-use polymoire::library::catalog::{Catalog, Tags};
+use polymoire::library::catalog::{Catalog, Tags, MAP_VERSION};
 use polymoire::library::dropbox::Dropbox;
 use polymoire::library::media::{self, Decoder};
 use polymoire::rng::Rng;
@@ -250,7 +250,7 @@ impl Player {
             .tracks
             .get(&id)
             .and_then(|t| t.beats.as_ref())
-            .map(|b| b.to_map());
+            .and_then(|b| b.to_map());
         self.current = Some(id.clone());
         self.counted = false;
         match self.cached(&id) {
@@ -272,7 +272,8 @@ impl Player {
     fn fetch(&mut self, id: &str, cat: &Catalog, dbx: &Arc<Dropbox>) {
         let Some(t) = cat.tracks.get(id) else { return };
         let busy = |v: &Vec<String>| v.iter().any(|i| i == id);
-        let needs_analysis = (t.beats.is_none() || t.duration <= 0.0) && !busy(&self.analyzing);
+        let stale = t.beats.as_ref().is_none_or(|b| b.v != MAP_VERSION);
+        let needs_analysis = (stale || t.duration <= 0.0) && !busy(&self.analyzing);
         let hit = self.cached(id);
         if busy(&self.downloading) || (hit.is_some() && !needs_analysis) {
             return;

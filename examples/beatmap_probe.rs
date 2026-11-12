@@ -41,6 +41,12 @@ fn main() {
                 let first: Vec<String> =
                     m.beats.iter().take(8).map(|b| format!("{b:.3}")).collect();
                 println!("  first beats: {}", first.join(" "));
+                let code = m.encode();
+                println!(
+                    "  stored as {} chars ({:.2} per beat)",
+                    code.len(),
+                    code.len() as f64 / m.beats.len().max(1) as f64
+                );
                 if grid {
                     let period = 60.0 / BPM as f64;
                     let mut errs: Vec<f64> = m

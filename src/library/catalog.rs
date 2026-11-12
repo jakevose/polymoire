@@ -34,45 +34,36 @@ pub struct Listed {
     pub modified: String,
 }
 
-/// Beat times, delta-coded in milliseconds to keep the cache small.
+/// A beat map in its compact form (see `BeatMap::encode`). `v` is the mapper version:
+/// maps from an older mapper are dropped and made again when the track next plays.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct StoredBeats {
+    pub v: u32,
     pub bpm: f32,
-    pub deltas: Vec<u32>,
+    pub beats: String,
 }
+
+/// Bump when the beat mapper changes enough that old maps should be redone.
+pub const MAP_VERSION: u32 = 2;
 
 impl From<&BeatMap> for StoredBeats {
     fn from(m: &BeatMap) -> Self {
-        let mut last = 0;
-        let deltas = m
-            .beats
-            .iter()
-            .map(|&b| {
-                let ms = (b * 1000.0).round().max(0.0) as u32;
-                let d = ms.saturating_sub(last);
-                last = ms;
-                d
-            })
-            .collect();
-        StoredBeats { bpm: m.bpm, deltas }
+        StoredBeats {
+            v: MAP_VERSION,
+            bpm: m.bpm,
+            beats: m.encode(),
+        }
     }
 }
 
 impl StoredBeats {
-    pub fn to_map(&self) -> BeatMap {
-        let mut t = 0u64;
-        let beats = self
-            .deltas
-            .iter()
-            .map(|&d| {
-                t += d as u64;
-                t as f64 / 1000.0
-            })
-            .collect();
-        BeatMap {
-            bpm: self.bpm,
-            beats,
-        }
+    /// The map, if it's from the current mapper and reads back.
+    pub fn to_map(&self) -> Option<BeatMap> {
+        (self.v == MAP_VERSION)
+            .then(|| BeatMap::decode(self.bpm, &self.beats))
+            .flatten()
+            .filter(|m| !m.beats.is_empty())
     }
 }
 
@@ -718,8 +709,11 @@ mod tests {
             bpm: 123.4,
             beats: vec![0.25, 0.737, 1.224],
         };
-        let back = StoredBeats::from(&m).to_map();
+        let stored = StoredBeats::from(&m);
+        let back = stored.to_map().unwrap();
         assert_eq!(back.bpm, m.bpm);
+        // A map from an older mapper is dropped (made again on next play).
+        assert!(StoredBeats { v: 1, ..stored }.to_map().is_none());
         for (a, b) in back.beats.iter().zip(&m.beats) {
             assert!((a - b).abs() < 0.001);
         }

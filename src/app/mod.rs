@@ -53,6 +53,10 @@ pub struct PolymoireApp {
     /// Sim time each trait last started changing, for the HUD flash.
     flashed: Vec<f64>,
     pub paused: bool,
+    /// Media player: the picture holds still from a change of track until the new
+    /// track's sound arrives, so the gap doesn't play out as a slow drift.
+    held: bool,
+    last_track: Option<String>,
     pub hud_visible: bool,
     pub reduced_motion: bool,
     pub fullscreen: bool,
@@ -116,6 +120,8 @@ impl PolymoireApp {
             last_frame: Instant::now(),
             flashed: vec![-99.0; n],
             paused: false,
+            held: false,
+            last_track: None,
             hud_visible: true,
             reduced_motion: false,
             fullscreen: false,
@@ -255,6 +261,19 @@ impl PolymoireApp {
         } else {
             self.audio.frame(None)
         };
+        if self.player_mode() {
+            let p = &self.library.player;
+            if p.current != self.last_track {
+                self.last_track = p.current.clone();
+                self.held = p.current.is_some();
+            }
+            if self.held && p.heard().is_some() && a.levels.present {
+                self.held = false;
+            }
+        } else {
+            self.held = false;
+        }
+        let frozen = self.paused || self.held;
         let weights = self.traits.reaction(self.sim);
         let feats = self.vibe.features(dt as f32, &a.levels, &a.rhythm, a.live);
         let mood_changed = self.vibe.update(dt as f32, &feats, &a.rhythm);
@@ -273,25 +292,21 @@ impl PolymoireApp {
         };
         self.visual = self.pulse.frame(FrameInput {
             // Pausing freezes the picture, including its local motion.
-            dt: if self.paused { 0.0 } else { dt as f32 },
+            dt: if frozen { 0.0 } else { dt as f32 },
             levels: &a.levels,
             live: a.live,
-            beat: a.beat && !self.paused,
+            beat: a.beat && !frozen,
             weights: &weights,
             energy,
             period: a.period as f32,
-            hits: if self.paused {
-                Default::default()
-            } else {
-                a.hits
-            },
+            hits: if frozen { Default::default() } else { a.hits },
             sound,
             reduced_motion: self.reduced_motion,
         });
         let active = self.pulse.active();
         let motion = if self.reduced_motion { 0.35 } else { 1.0 };
 
-        if !self.paused {
+        if !frozen {
             self.sim += dt;
             let tempo = self.traits.scalar(Key::Tempo, self.sim) as f64 * motion;
             self.flow_t += dt * (tempo + self.pulse.flow_speed_add(self.reduced_motion) as f64);

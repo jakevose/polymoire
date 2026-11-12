@@ -201,13 +201,21 @@ it to the shader. The flow clock `flow_t` advances by the Tempo trait plus
   - *Beats from the map, everything else live.* `AudioEngine::frame(Some(Tap))` replaces
     the beat clock with the track's beat map (same `BEAT_LEAD`); kicks, levels and vibe
     still come from the live analyzer. No map yet → live beat clock.
-  - *Beat mapping:* 8 band-pass onset bands at hop 256, whole-track autocorrelation tempo
-    with a mild 120 bpm prior, Ellis DP placement, then sub-frame refinement, and beats
+  - *Beat mapping:* the whole decoded track, never a BPM tag. 8 band-pass onset bands
+    at hop 256; a tempo curve (autocorrelation in 8 s windows every 1 s, mild 120 bpm
+    prior plus a 0.3 pull toward the whole-track tempo, Viterbi with a cost per squared
+    log tempo change); Ellis DP placement using the local period, then sub-frame refinement, and beats
     without a clear onset (breakdowns) spread evenly between heard ones. "Clear" is
     relative to the track's median beat; a fixed threshold let hats break it. Hop 128 was
     tried: kicks got sharper but breakdowns fell apart (DP effectively looser).
   - *Fetching:* the current and next track are downloaded whole (3 kept in memory) and
-    analyzed on a thread once; the map is stored delta-coded in ms. Tags crawl one file
+    analyzed on a thread once.
+  - *Beat storage:* ms times as second differences (interval changes), zero runs
+    collapsed, zigzag varints, base64url: ~1.2 chars/beat on the demo, a few bytes for a
+    perfectly steady track. `StoredBeats.v` = `MAP_VERSION`; older maps are redone on
+    next play. One tempo was the old weakness: 128→96 hit only 72% of beats.
+  - *Track change hold:* in player mode the picture freezes (like Pause) from a change
+    of track until the new track is heard and the analyzer reports sound (user request). Tags crawl one file
     at a time from the first 256 KB (a second request if the ID3 block is bigger).
   - *The one Dropbox write:* scopes can't restrict writes to a file, so the app asks for
     `files.content.write` and `dropbox.rs` enforces it; a test scans that file for every
@@ -250,6 +258,7 @@ it to the shader. The flow clock `flow_t` advances by the Tempo trait plus
 | `FLAT_BUDGET` (1.3), `GUARD_WEIGHT` (0.3) | traits.rs | Variety guard. Lower budget or weight means fewer flat looks but rarer two-ink looks |
 | `spread()` factors | shader.wgsl | How much of the palette the narrow fields reach |
 | `TIGHTNESS` (100), `STRONG` (0.5× median), `HOP` (256) | beatmap.rs | Beat map grid rigidity; what counts as a heard beat; time resolution |
+| `TEMPO_WINDOW` (8 s), `TEMPO_STEP` (1 s), `TEMPO_CHANGE` (40), `GLOBAL_PULL` (0.3) | beatmap.rs | Tempo curve: resolution, how readily it changes, how firmly breakdowns hold |
 | `TAG_BYTES` (256 KB), `BACKUP_EVERY` (10 min) | app/library.rs | Tag crawl read size; how often the backup is written |
 
 Baseline from `cargo run --release --example pulse_probe` at this point. Since the "more
@@ -283,6 +292,10 @@ error against the true grid):
 |---|---|---|---|
 | mp3 (lame 192k) | 1.7 ms | 3.6 ms | also through the player's 48 kHz resampler: 1.7 ms |
 | m4a (ffmpeg / afconvert) | 25 / 50 ms | — | constant: AAC priming isn't trimmed (see Open items) |
+
+Unchanged by the tempo curve (0.06 s analysis per minute). Synthetic tempo changes
+(`follows_a_tempo_change`): 112→136, ramp 118→134, 128→96 all 100%, 100→140 98% of
+beats within 15 ms.
 
 ## Verifying
 
@@ -318,8 +331,12 @@ error against the true grid):
   Progressive streaming would need a growing buffer as the media source.
 - The player's output doesn't follow a change of default output device yet.
 - Refresh token is plain text in the app data folder; move it to the OS keychain.
-- Beat map assumes one tempo per track (DP follows slow drift). Tracks with real tempo
-  changes need a local tempo pass.
+- Tags, from the user's library (16,422 mp3s, 9,105 tag-read so far): title, artist,
+  album, track 100% when read; album artist 75%, year 80%, genre 68% (163 genres with
+  near-duplicates: Hip-Hop / Rap/Hip Hop, World / World Music). 113 artists split
+  across collaboration credits ("Skrillex/Bladee", "feat."). Proposed: split artist
+  credits so a track lists under each artist, fold genre spellings, read the
+  compilation flag and ReplayGain. Waiting on the user.
 - The website screenshots don't show the player yet (`mise run screenshots`).
 
 - Confirm with the user that the silence fix matches what they saw, and that the looks
@@ -382,3 +399,7 @@ error against the true grid):
   - User asked for scan progress to be checkpointed into the catalog and Dropbox for
     resume. Made the scan resumable (per-folder cursors in the catalog, backup every
     2 min while scanning) and later syncs incremental via a Dropbox change cursor.
+- **2026-11-12**
+  - Beat maps: tempo curve (Viterbi over windowed tempo) replaces one tempo per
+    track; compact versioned storage. User request: freeze the picture between tracks
+    until the new one is heard. Looked at tag quality in the user's library.
