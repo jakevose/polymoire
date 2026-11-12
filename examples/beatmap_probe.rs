@@ -48,6 +48,21 @@ fn main() {
                 let first: Vec<String> =
                     m.beats.iter().take(8).map(|b| format!("{b:.3}")).collect();
                 println!("  first beats: {}", first.join(" "));
+                let st = &m.structure;
+                let secs: Vec<String> = st
+                    .sections
+                    .iter()
+                    .map(|s| {
+                        let t = m.beats.get(s.beat).copied().unwrap_or(0.0);
+                        format!("{t:.1}s#{}({:+.0})", s.beat, s.level)
+                    })
+                    .collect();
+                println!(
+                    "  first downbeat #{} {:.2} s; sections: {}",
+                    st.bar,
+                    m.beats.get(st.bar).copied().unwrap_or(0.0),
+                    secs.join(" ")
+                );
                 let code = m.encode();
                 println!(
                     "  stored as {} chars ({:.2} per beat)",

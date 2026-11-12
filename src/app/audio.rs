@@ -63,6 +63,8 @@ pub struct AudioFrame {
     pub rhythm: Rhythm,
     /// Hits detected so far: [kick, snare, hats] (diagnostics).
     pub hit_counts: [u64; 3],
+    /// Where the last beat sits in the song, when the track is mapped.
+    pub place: Option<polymoire::structure::Place>,
 }
 
 /// The media player's output, for `AudioEngine::frame` to analyze instead of system audio.
@@ -224,6 +226,7 @@ impl AudioEngine {
                 a.beat = from.is_some_and(|p| map.beat_in(p + BEAT_LEAD, heard + BEAT_LEAD));
                 a.period = map.period_at(heard);
                 a.levels.bpm = map.bpm;
+                a.place = map.place_at(heard + BEAT_LEAD);
                 self.map_polled = Some(heard);
             }
             None => self.map_polled = None,
@@ -250,6 +253,7 @@ impl AudioEngine {
                 hit_counts: f.analyzer.hit_counts(),
                 period: f.analyzer.period(),
                 live: true,
+                place: None,
             },
             None => AudioFrame {
                 period: f.analyzer.period(),

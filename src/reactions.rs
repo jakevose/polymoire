@@ -405,6 +405,13 @@ impl Pulse {
     }
 }
 
+/// Music is sounding now: present, and not just a tail falling away. When the sound
+/// stops, the fast level falls 10 dB under the slow one within about 0.3 s, while the
+/// beat clock is still ticking.
+pub fn is_sounding(levels: &Levels) -> bool {
+    levels.present && levels.level_fast > levels.level_slow * 0.3
+}
+
 /// Detects a "drop": energy jumping well above its recent average.
 pub fn is_drop(levels: &Levels) -> bool {
     levels.level_slow > 0.004 && levels.level_fast > levels.level_slow * 1.7

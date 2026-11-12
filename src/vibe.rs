@@ -8,6 +8,7 @@
 
 use crate::analysis::{Levels, Rhythm};
 use crate::dsp::smooth_k;
+use crate::structure::Place;
 use crate::traits::Key;
 
 /// How long a new mood must hold before it takes over, seconds.
@@ -113,7 +114,27 @@ pub fn classify(intensity: f32, heaviness: f32, density: f32, brightness: f32) -
     }
 }
 
+/// Bars into a section before its level is trusted to say how loud the song gets: the
+/// slow level takes about this long to settle after a change of section.
+pub const SECTION_SETTLE_BARS: usize = 4;
+
 impl Vibe {
+    /// With a song map: this section is `p.level` dB under the song's loudest, so the
+    /// loudest is at least the current level raised by that much. Without it, a quiet
+    /// intro is judged against itself and reacts as hard as the drop that follows. Call
+    /// before [`Vibe::features`].
+    ///
+    /// Coming down from a louder section, the slow level is still high for a few bars and
+    /// would overstate the peak, so it waits [`SECTION_SETTLE_BARS`]; coming up (or at the
+    /// start of the song) it can only understate it, which is safe.
+    pub fn know_section(&mut self, l: &Levels, p: &Place) {
+        let settled = p.bar_in_section >= SECTION_SETTLE_BARS || p.level >= p.prev_level;
+        if l.present && settled {
+            let peak = l.level_slow * 10f32.powf(-p.level.min(0.0) / 20.0);
+            self.loud_peak = self.loud_peak.max(peak);
+        }
+    }
+
     /// Extracts features from the analyzer's outputs.
     pub fn features(&mut self, dt: f32, l: &Levels, r: &Rhythm, live: bool) -> Features {
         let k = smooth_k(LEVEL_RATE, dt);
@@ -394,5 +415,57 @@ mod tests {
         };
         run(&mut p, &spike, 3.0);
         assert!(p.level <= MAX_LEVEL + 1e-4);
+    }
+
+    #[test]
+    fn a_mapped_quiet_intro_reads_quiet_from_the_start() {
+        let r = Rhythm::default();
+        let at = |x: f32| Levels {
+            level_fast: x,
+            level_slow: x,
+            present: true,
+            ..Default::default()
+        };
+        let run = |v: &mut Vibe, l: &Levels, db: Option<f32>, secs: f32| {
+            for _ in 0..(secs * 60.0) as usize {
+                if let Some(db) = db {
+                    let p = Place {
+                        beat_in_bar: 0,
+                        bar_in_section: 0,
+                        section_start: false,
+                        level: db,
+                        prev_level: db,
+                    };
+                    v.know_section(l, &p);
+                }
+                v.features(1.0 / 60.0, l, &r, true);
+            }
+        };
+        // Unmapped, an intro 12 dB down reads as full level: nothing to compare it with.
+        let mut blind = Vibe::default();
+        run(&mut blind, &at(0.05), None, 8.0);
+        assert!(blind.level > 0.9, "{}", blind.level);
+        // Mapped, it reads a quarter, and the drop after it reads full.
+        let mut v = Vibe::default();
+        run(&mut v, &at(0.05), Some(-12.0), 8.0);
+        assert!((0.2..0.3).contains(&v.level), "intro: {}", v.level);
+        run(&mut v, &at(0.2), Some(0.0), 4.0);
+        assert!(v.level > 0.95, "drop: {}", v.level);
+        // Into a breakdown 6 dB down, the hint waits for the level to settle, so the
+        // still-high slow level doesn't inflate the peak.
+        let loud = Levels {
+            level_slow: 0.2,
+            ..at(0.1)
+        };
+        let early = Place {
+            beat_in_bar: 0,
+            bar_in_section: 1,
+            section_start: false,
+            level: -6.0,
+            prev_level: 0.0,
+        };
+        let before = v.clone();
+        v.know_section(&loud, &early);
+        assert_eq!(v.loud_peak, before.loud_peak);
     }
 }

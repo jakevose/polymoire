@@ -12,6 +12,7 @@
 //! held in memory as decoded audio.
 
 use crate::dsp::{Biquad, FilterKind};
+use crate::structure::{self, Place, Structure};
 use serde::{Deserialize, Serialize};
 
 const HOP: usize = 256;
@@ -36,6 +37,9 @@ const GLOBAL_PULL: f32 = 0.3;
 pub struct BeatMap {
     pub bpm: f32,
     pub beats: Vec<f64>,
+    /// Bars and sections (see `structure`).
+    #[serde(default)]
+    pub structure: Structure,
 }
 
 impl BeatMap {
@@ -43,6 +47,16 @@ impl BeatMap {
     pub fn beat_in(&self, from: f64, to: f64) -> bool {
         let i = self.beats.partition_point(|&b| b <= from);
         self.beats.get(i).is_some_and(|&b| b <= to)
+    }
+
+    /// The index of the last beat at or before `t`.
+    pub fn index_at(&self, t: f64) -> Option<usize> {
+        self.beats.partition_point(|&b| b <= t).checked_sub(1)
+    }
+
+    /// Where the last beat at or before `t` sits in the song.
+    pub fn place_at(&self, t: f64) -> Option<Place> {
+        self.index_at(t).map(|i| self.structure.place(i))
     }
 
     /// The local beat period around `t`.
@@ -122,7 +136,11 @@ impl BeatMap {
                 t as f64 / 1000.0
             })
             .collect();
-        Some(BeatMap { bpm, beats })
+        Some(BeatMap {
+            bpm,
+            beats,
+            ..Default::default()
+        })
     }
 }
 
@@ -184,6 +202,8 @@ pub struct Tracker {
     n: usize,
     prev: Option<[f32; BANDS.len()]>,
     env: Vec<f32>,
+    /// Log band energies of every frame, for the structure.
+    bands: Vec<[f32; BANDS.len()]>,
 }
 
 impl Tracker {
@@ -202,6 +222,7 @@ impl Tracker {
             n: 0,
             prev: None,
             env: Vec::new(),
+            bands: Vec::new(),
         }
     }
 
@@ -220,6 +241,7 @@ impl Tracker {
                     None => 0.0,
                 };
                 self.env.push(flux);
+                self.bands.push(e);
                 self.prev = Some(e);
                 self.acc = [0.0; BANDS.len()];
                 self.n = 0;
@@ -250,11 +272,40 @@ impl Tracker {
         // The typical tempo: the median beat interval.
         let mut gaps: Vec<f64> = beats.windows(2).map(|w| w[1] - w[0]).collect();
         gaps.sort_by(f64::total_cmp);
+        let structure = beat_structure(&self.bands, hop, &beats);
         Some(BeatMap {
             bpm: (60.0 / gaps[gaps.len() / 2]) as f32,
             beats,
+            structure,
         })
     }
+}
+
+/// Each beat's fingerprint (mean log energy per band from it to the next beat) and
+/// power, then the bars and sections from those.
+fn beat_structure(bands: &[[f32; BANDS.len()]], hop: f64, beats: &[f64]) -> Structure {
+    let frame = |t: f64| ((t / hop) as usize).min(bands.len());
+    let (mut feats, mut power) = (Vec::new(), Vec::new());
+    for w in beats.windows(2) {
+        let (a, b) = (
+            frame(w[0]),
+            frame(w[1]).max(frame(w[0]) + 1).min(bands.len()),
+        );
+        if a >= b {
+            break;
+        }
+        let mut f = [0.0f32; structure::BANDS];
+        let mut p = 0.0;
+        for e in &bands[a..b] {
+            for (k, v) in e.iter().enumerate() {
+                f[k] += v / (b - a) as f32;
+                p += v.exp() / (b - a) as f32;
+            }
+        }
+        feats.push(f);
+        power.push(p);
+    }
+    Structure::find(&feats, &power)
 }
 
 /// Remove the local mean (about one second), clip at zero, scale to unit deviation.
@@ -633,6 +684,7 @@ mod tests {
         let steady = BeatMap {
             bpm: 120.0,
             beats: (0..400).map(|i| 0.25 + i as f64 * 0.5).collect(),
+            ..Default::default()
         };
         let code = steady.encode();
         assert!(code.len() <= 8, "steady: {} chars", code.len());
@@ -649,6 +701,7 @@ mod tests {
                     t
                 })
                 .collect(),
+            ..Default::default()
         };
         let code = wobbly.encode();
         let back = BeatMap::decode(100.0, &code).unwrap();
@@ -669,6 +722,7 @@ mod tests {
         let m = BeatMap {
             bpm: 120.0,
             beats: vec![0.5, 1.0, 1.5, 2.1],
+            ..Default::default()
         };
         assert!(m.beat_in(0.9, 1.0));
         assert!(!m.beat_in(1.0, 1.4));

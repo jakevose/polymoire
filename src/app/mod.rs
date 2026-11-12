@@ -14,9 +14,9 @@ use eframe::egui_wgpu;
 use library::Library;
 use polymoire::director::{Director, Halt, Moment};
 use polymoire::quality::Quality;
-use polymoire::reactions::{is_drop, FrameInput, Pulse, Sound, Visual};
+use polymoire::reactions::{is_drop, is_sounding, FrameInput, Pulse, Sound, Visual};
 use polymoire::rng::Rng;
-use polymoire::traits::{Key, Traits};
+use polymoire::traits::{Key, Scope, Traits};
 use polymoire::uniforms::Uniforms;
 use polymoire::vibe::{self, Mood, Vibe};
 use std::time::Instant;
@@ -209,7 +209,7 @@ impl PolymoireApp {
         }
     }
 
-    fn shift(&mut self, n: Option<usize>, dur: Option<f64>) {
+    fn shift(&mut self, n: Option<usize>, scope: Scope, dur: Option<f64>) {
         let active = self.pulse.active();
         // While music drives the picture, its vibe steers what gets picked. Without it, the
         // picks lean calm (the Ambient mood): silence should settle the picture.
@@ -221,6 +221,7 @@ impl PolymoireApp {
         let changed = self.traits.shift_with(
             self.sim,
             n,
+            scope,
             dur,
             active,
             self.reduced_motion,
@@ -245,7 +246,7 @@ impl PolymoireApp {
         self.paused = false;
         if self.pulse.active() {
             let p = self.last_audio.period;
-            self.shift(None, Some(p * 4.0));
+            self.shift(None, Scope::Any, Some(p * 4.0));
         } else {
             self.director.shift_now(self.sim);
         }
@@ -300,6 +301,9 @@ impl PolymoireApp {
         let frozen = self.paused || self.held || self.halt.stopped();
         let weights = self.traits.reaction(self.sim);
         let mood_changed = !self.held && {
+            if let Some(p) = &a.place {
+                self.vibe.know_section(&a.levels, p);
+            }
             let feats = self.vibe.features(dt as f32, &a.levels, &a.rhythm, a.live);
             self.vibe.update(dt as f32, &feats, &a.rhythm)
         };
@@ -340,14 +344,16 @@ impl PolymoireApp {
 
             let cue = self.director.step(Moment {
                 sim: self.sim,
-                music: active,
+                // The beat clock runs on briefly after the sound stops; that isn't music.
+                music: active && is_sounding(&a.levels),
                 beat: a.beat,
                 period: a.period,
                 big_change: is_drop(&a.levels) || mood_changed,
                 reduced_motion: self.reduced_motion,
+                place: a.place,
             });
             if let Some(c) = cue {
-                self.shift(c.n, c.dur);
+                self.shift(c.n, c.scope, c.dur);
             }
         }
         self.traits.settle(self.sim);

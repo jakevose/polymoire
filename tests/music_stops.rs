@@ -5,7 +5,7 @@
 use polymoire::analysis::{Analyzer, BEAT_LEAD};
 use polymoire::demo::DemoSynth;
 use polymoire::director::{Director, Moment, MIN_GAP, SETTLE};
-use polymoire::reactions::{is_drop, FrameInput, Pulse, Sound};
+use polymoire::reactions::{is_drop, is_sounding, FrameInput, Pulse, Sound};
 use polymoire::rng::Rng;
 
 const SR: f32 = 48_000.0;
@@ -93,11 +93,12 @@ fn run(after: After, seed: u64) -> Vec<f64> {
         });
         let cue = director.step(Moment {
             sim,
-            music: pulse.active(),
+            music: pulse.active() && is_sounding(&l),
             beat,
             period: an.period(),
             big_change: is_drop(&l) || mood_changed,
             reduced_motion: false,
+            place: None,
         });
         if cue.is_some() {
             shifts.push(sim);

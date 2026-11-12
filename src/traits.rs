@@ -25,6 +25,32 @@ pub enum Key {
     Mosaic,
 }
 
+/// Which traits a shift may change.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Scope {
+    #[default]
+    Any,
+    /// The ones that remake the whole picture: pattern, colors, symmetry, effect, scale,
+    /// mosaic. For a new section of the song.
+    Scene,
+    /// The rest: motion, texture, chroma and the reaction. For variations within a section.
+    Detail,
+}
+
+impl Scope {
+    pub fn allows(self, key: Key) -> bool {
+        let scene = matches!(
+            key,
+            Key::Palette | Key::Field | Key::Symmetry | Key::Effect | Key::Scale | Key::Mosaic
+        );
+        match self {
+            Scope::Any => true,
+            Scope::Scene => scene,
+            Scope::Detail => !scene,
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Value {
     /// Discrete choice; the shader receives the option index.
@@ -681,7 +707,15 @@ impl Traits {
         audio_active: bool,
         reduced_motion: bool,
     ) -> Vec<usize> {
-        self.shift_with(sim, n, dur, audio_active, reduced_motion, &|_, _| 1.0)
+        self.shift_with(
+            sim,
+            n,
+            Scope::Any,
+            dur,
+            audio_active,
+            reduced_motion,
+            &|_, _| 1.0,
+        )
     }
 
     /// Combined [`flatness`] of the look the traits are heading to, leaving out trait `skip`.
@@ -700,11 +734,14 @@ impl Traits {
         self.flatness_without(usize::MAX)
     }
 
-    /// Like [`Traits::shift`], with picks weighted by `bias(trait, option name)`.
+    /// Like [`Traits::shift`], limited to traits in `scope`, with picks weighted by
+    /// `bias(trait, option name)`.
+    #[allow(clippy::too_many_arguments)]
     pub fn shift_with(
         &mut self,
         sim: f64,
         n: Option<usize>,
+        scope: Scope,
         dur: Option<f64>,
         audio_active: bool,
         reduced_motion: bool,
@@ -734,13 +771,33 @@ impl Traits {
                 picks.push(i);
             }
         }
+        let in_scope = |t: &Self, i: usize| scope.allows(t.defs[i].key);
         while picks.len() < n {
             let next = self
                 .bag
                 .iter()
-                .position(|&i| can_move(self, i) && !picks.contains(&i));
+                .position(|&i| can_move(self, i) && in_scope(self, i) && !picks.contains(&i));
             match next {
                 Some(at) => picks.push(self.bag.remove(at)),
+                // A limited shift whose traits have all had their turn this round takes
+                // the one that waited longest, and leaves the rest of the round as it is.
+                None if scope != Scope::Any => {
+                    let longest = (0..self.defs.len())
+                        .filter(|&i| {
+                            can_move(self, i)
+                                && in_scope(self, i)
+                                && !picks.contains(&i)
+                                && !self.recent.contains(&i)
+                        })
+                        .min_by(|&a, &b| self.state[a].last.total_cmp(&self.state[b].last));
+                    match longest {
+                        Some(i) => {
+                            self.bag.retain(|&k| k != i);
+                            picks.push(i);
+                        }
+                        None => break,
+                    }
+                }
                 None if !refilled => {
                     refilled = true;
                     self.recent.extend(picks.iter().copied());
@@ -975,13 +1032,21 @@ mod tests {
             for (k, s) in t.state.iter_mut().enumerate() {
                 s.locked = k != i;
             }
-            let picked = t.shift_with(sim, Some(1), Some(1.0), true, false, &|key, name| {
-                if key == Key::Palette && name == "Abyss" {
-                    20.0
-                } else {
-                    1.0
-                }
-            });
+            let picked = t.shift_with(
+                sim,
+                Some(1),
+                Scope::Any,
+                Some(1.0),
+                true,
+                false,
+                &|key, name| {
+                    if key == Key::Palette && name == "Abyss" {
+                        20.0
+                    } else {
+                        1.0
+                    }
+                },
+            );
             if picked == vec![i] && t.defs[i].opts[t.state[i].to].name == "Abyss" {
                 abyss += 1;
             }
@@ -1149,5 +1214,29 @@ mod tests {
         let mut t = traits();
         let c = t.shift(0.0, Some(1), Some(5.0), true, true);
         assert!((t.state[c[0]].dur - 8.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn scoped_shifts_change_only_their_kind() {
+        let mut t = traits();
+        t.variety_guard = false;
+        for k in 0..40 {
+            let sim = k as f64 * 10.0;
+            let scope = if k % 3 == 0 {
+                Scope::Scene
+            } else {
+                Scope::Detail
+            };
+            let c = t.shift_with(sim, Some(2), scope, Some(1.0), true, false, &|_, _| 1.0);
+            assert_eq!(c.len(), 2, "shift {k} found too few traits");
+            for i in c {
+                assert!(
+                    scope.allows(t.defs[i].key),
+                    "{:?} in {scope:?}",
+                    t.defs[i].key
+                );
+            }
+            t.settle(sim + 9.0);
+        }
     }
 }

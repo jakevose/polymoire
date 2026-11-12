@@ -15,6 +15,9 @@ itself from your Dropbox.
   and m4a files from a Dropbox folder instead. Only one source runs at a time: the media
   player turns system-audio listening off. See [Media player](#media-player).
 - **Demo beat.** A built-in 120 bpm house loop; toggle it with the button or `D`.
+- **Changes on the beat.** With system audio, one or two traits change every two or
+  four bars' worth of beats; a drop or a change of mood brings a bigger change. With the
+  media player, changes follow the song's sections (see below).
 - **Every trait gets a turn.** Automatic changes walk through all the traits in a
   shuffled order, one or two at a time, before any changes again, and never change the
   same trait twice in a row. The one exception keeps the picture from going flat: if the
@@ -57,6 +60,12 @@ How it behaves:
   tempo changes. The map is saved (about a byte per beat), so each track is analyzed
   once. Until it's ready, the live beat tracker
   fills in.
+- **The look follows the song.** The map also finds where bars start and where the song
+  changes section (intro, drop, breakdown). A new section brings a new scene (pattern,
+  colors, symmetry): quickly into a drop, slowly into a breakdown. In between, one
+  detail varies every four bars (eight in quieter sections), always on the first beat
+  of a bar. A quiet intro reacts gently from its first beat, because the map knows how
+  loud the song will get.
 - **Even volume.** Each track's loudness is measured when it's analyzed for beats, and
   it plays at the same level as the others: loud masters come down, quiet ones come up
   only as far as they can without clipping. Before a track is measured, ReplayGain tags

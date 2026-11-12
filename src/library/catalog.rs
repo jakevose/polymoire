@@ -53,10 +53,13 @@ pub struct StoredBeats {
     pub v: u32,
     pub bpm: f32,
     pub beats: String,
+    /// Bars and sections (`Structure::encode`).
+    pub shape: String,
 }
 
 /// Bump when the beat mapper changes enough that old maps should be redone.
-pub const MAP_VERSION: u32 = 2;
+/// 3: bars and sections.
+pub const MAP_VERSION: u32 = 3;
 
 impl From<&BeatMap> for StoredBeats {
     fn from(m: &BeatMap) -> Self {
@@ -64,6 +67,7 @@ impl From<&BeatMap> for StoredBeats {
             v: MAP_VERSION,
             bpm: m.bpm,
             beats: m.encode(),
+            shape: m.structure.encode(),
         }
     }
 }
@@ -75,7 +79,15 @@ impl StoredBeats {
             .then(|| BeatMap::decode(self.bpm, &self.beats))
             .flatten()
             .filter(|m| !m.beats.is_empty())
+            .map(|m| BeatMap {
+                structure: stored_structure(&self.shape),
+                ..m
+            })
     }
+}
+
+fn stored_structure(text: &str) -> crate::structure::Structure {
+    crate::structure::Structure::decode(text).unwrap_or_default()
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
@@ -879,6 +891,7 @@ mod tests {
             &BeatMap {
                 bpm: 120.0,
                 beats: vec![0.5, 1.0],
+                ..Default::default()
             },
         );
         c.played("a", 10);
@@ -923,6 +936,7 @@ mod tests {
             &BeatMap {
                 bpm: 128.0,
                 beats: vec![],
+                ..Default::default()
             },
         );
         let artists = c.groups(View::Artists, "");
@@ -947,10 +961,18 @@ mod tests {
         let m = BeatMap {
             bpm: 123.4,
             beats: vec![0.25, 0.737, 1.224],
+            structure: crate::structure::Structure {
+                bar: 1,
+                sections: vec![crate::structure::Section {
+                    beat: 1,
+                    level: -2.0,
+                }],
+            },
         };
         let stored = StoredBeats::from(&m);
         let back = stored.to_map().unwrap();
         assert_eq!(back.bpm, m.bpm);
+        assert_eq!(back.structure, m.structure);
         // A map from an older mapper is dropped (made again on next play).
         assert!(StoredBeats { v: 1, ..stored }.to_map().is_none());
         for (a, b) in back.beats.iter().zip(&m.beats) {

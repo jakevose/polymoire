@@ -1,5 +1,7 @@
-//! When the look changes. With music, trait shifts land on the beat every four or eight
-//! beats, and a drop or a change of mood brings a bigger one. Without music the picture
+//! When the look changes. With a song's map (the media player), the look follows the
+//! song: a new scene where a new section starts, small variations on phrase lines in
+//! between. With live music, trait shifts land on the beat every four or eight beats,
+//! and a drop or a change of mood brings a bigger one. Without music the picture
 //! settles: shifts come slowly, one trait at a time, with long crossfades.
 //!
 //! The pacing without music is a comfort rule. When system audio stopped, the old timer
@@ -8,6 +10,8 @@
 //! uncomfortable to watch. Tests here pin the calmer pacing down.
 
 use crate::rng::Rng;
+use crate::structure::Place;
+use crate::traits::Scope;
 
 /// Shortest gap between two automatic shifts while music plays, seconds. A drop or mood
 /// change landing just after a beat shift waits for it, instead of stacking a second change.
@@ -23,12 +27,27 @@ pub const IDLE_FADE: (f32, f32) = (6.0, 9.0);
 /// idle shift.
 pub const SETTLE: f64 = 12.0;
 
+/// Live music: shortest time between two drop-or-mood scene changes, seconds. The live
+/// mood can flip back and forth across a boundary.
+pub const BIG_GAP: f64 = 16.0;
+/// With a song map: bars between variations in a loud section, and in a quieter one.
+pub const PHRASE_BARS: usize = 4;
+pub const QUIET_PHRASE_BARS: usize = 8;
+/// A section this many dB under the loudest counts as quieter.
+pub const QUIET_SECTION_DB: f32 = 3.0;
+/// A long section gets a new scene this often, in bars, so a steady track still moves on.
+pub const SCENE_BARS: usize = 16;
+/// A new section this much louder (or quieter) than the last, dB, is a drop (or a
+/// breakdown).
+pub const SECTION_JUMP_DB: f32 = 3.0;
+
 /// A shift to start now: how many traits (`None` lets the trait engine pick one or two) and
 /// the crossfade length in seconds (`None` for the engine's default).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Cue {
     pub n: Option<usize>,
     pub dur: Option<f64>,
+    pub scope: Scope,
 }
 
 /// What the director needs to know each frame.
@@ -44,6 +63,8 @@ pub struct Moment {
     pub period: f64,
     /// A drop or a change of mood this frame.
     pub big_change: bool,
+    /// Where the last beat sits in the song, when the song is mapped.
+    pub place: Option<Place>,
     pub reduced_motion: bool,
 }
 
@@ -56,6 +77,8 @@ pub struct Director {
     last_shift: f64,
     last_beat: f64,
     was_music: bool,
+    /// Where the song is, while following a map.
+    place: Option<Place>,
 }
 
 impl Director {
@@ -68,6 +91,7 @@ impl Director {
             last_shift: -99.0,
             last_beat: -99.0,
             was_music: false,
+            place: None,
         }
     }
 
@@ -77,6 +101,7 @@ impl Director {
         if m.beat {
             self.last_beat = m.sim;
         }
+        self.place = m.place;
         let cue = if m.music {
             self.with_music(m, slow)
         } else {
@@ -89,6 +114,7 @@ impl Director {
                 Cue {
                     n: Some(1),
                     dur: Some(self.range(IDLE_FADE)),
+                    scope: Scope::Any,
                 }
             })
         };
@@ -100,15 +126,19 @@ impl Director {
     }
 
     fn with_music(&mut self, m: Moment, slow: f64) -> Option<Cue> {
+        if let Some(p) = m.place {
+            return self.with_map(m, p);
+        }
         let since_shift = m.sim - self.last_shift;
         // A drop or a change of mood brings a bigger scene change, then the beat count
         // starts over so a beat shift doesn't follow straight after.
-        if m.big_change && m.sim - self.last_big > 8.0 && since_shift >= MIN_GAP {
+        if m.big_change && m.sim - self.last_big > BIG_GAP && since_shift >= MIN_GAP {
             self.last_big = m.sim;
             self.beats_to_shift = self.beats_until_next();
             return Some(Cue {
                 n: Some(2),
                 dur: Some(m.period * 4.0),
+                scope: Scope::Any,
             });
         }
         if m.sim - self.last_beat < BEATLESS_AFTER {
@@ -122,6 +152,7 @@ impl Director {
                     return Some(Cue {
                         n: None,
                         dur: Some(m.period * beats),
+                        scope: Scope::Any,
                     });
                 }
             }
@@ -130,13 +161,67 @@ impl Director {
         // Music without a beat: drift on a timer.
         (m.sim >= self.next_at).then(|| {
             self.next_at = m.sim + self.range(DRIFT_HOLD) * slow;
-            Cue { n: None, dur: None }
+            Cue {
+                n: None,
+                dur: None,
+                scope: Scope::Any,
+            }
+        })
+    }
+
+    /// Following a mapped song, on its beats only. A section start brings a new scene
+    /// (quickly into a drop, slowly into a breakdown); a long section gets a new scene
+    /// every [`SCENE_BARS`]; in between, one detail varies every phrase. Drops and moods
+    /// aren't guessed from the live sound: the map already knows the sections.
+    fn with_map(&mut self, m: Moment, p: Place) -> Option<Cue> {
+        if !m.beat || p.beat_in_bar != 0 || m.sim - self.last_shift < MIN_GAP {
+            return None;
+        }
+        self.next_at = self.next_at.max(m.sim + BEATLESS_AFTER);
+        let beats = |n: f64| Some(m.period * n);
+        if p.section_start {
+            let rise = p.level - p.prev_level;
+            let (n, dur) = if rise >= SECTION_JUMP_DB {
+                (2, 2.0)
+            } else if rise <= -SECTION_JUMP_DB {
+                (2, 8.0)
+            } else {
+                (1, 4.0)
+            };
+            return Some(Cue {
+                n: Some(n),
+                dur: beats(dur),
+                scope: Scope::Scene,
+            });
+        }
+        let bar = p.bar_in_section;
+        if bar == 0 {
+            return None;
+        }
+        if bar.is_multiple_of(SCENE_BARS) {
+            return Some(Cue {
+                n: Some(1),
+                dur: beats(4.0),
+                scope: Scope::Scene,
+            });
+        }
+        let phrase = if p.level < -QUIET_SECTION_DB {
+            QUIET_PHRASE_BARS
+        } else {
+            PHRASE_BARS
+        };
+        bar.is_multiple_of(phrase).then(|| Cue {
+            n: Some(1),
+            dur: beats(4.0),
+            scope: Scope::Detail,
         })
     }
 
     /// What the HUD shows: the beats or seconds until the next shift.
     pub fn describe(&self, sim: f64, music: bool) -> String {
-        if music && sim - self.last_beat < BEATLESS_AFTER {
+        if let (true, Some(p)) = (music, self.place) {
+            format!("following the song · bar {}", p.bar_in_section + 1)
+        } else if music && sim - self.last_beat < BEATLESS_AFTER {
             format!("on the beat · {}", self.beats_to_shift)
         } else {
             format!("next shift {:.1}s", (self.next_at - sim).max(0.0))
@@ -153,12 +238,13 @@ impl Director {
         self.rng.range(lo, hi) as f64
     }
 
-    /// Beats between shifts while music drives the timing.
+    /// Beats between shifts while live music drives the timing: two or four bars' worth
+    /// (every four or eight beats kept a trait mid-change nearly half the time).
     fn beats_until_next(&mut self) -> u32 {
         if self.rng.chance(0.6) {
             8
         } else {
-            4
+            16
         }
     }
 
@@ -256,6 +342,7 @@ mod tests {
                 period: beats.unwrap_or(0.5),
                 big_change: false,
                 reduced_motion,
+                place: None,
             };
             if let Some(c) = d.step(m) {
                 out.push((sim, c));
@@ -269,13 +356,13 @@ mod tests {
     }
 
     #[test]
-    fn music_shifts_on_the_beat_every_four_or_eight() {
+    fn music_shifts_on_the_beat_every_eight_or_sixteen() {
         let mut d = Director::new(Rng::new(1));
         let cues = run(&mut d, 0.0, 120.0, true, Some(0.5), false);
-        assert!(cues.len() > 20, "{}", cues.len());
+        assert!(cues.len() > 12, "{}", cues.len());
         for g in gaps(&cues) {
             let beats = (g / 0.5).round();
-            assert!(beats == 4.0 || beats == 8.0, "gap of {g:.2} s");
+            assert!(beats == 8.0 || beats == 16.0, "gap of {g:.2} s");
         }
     }
 
@@ -353,6 +440,7 @@ mod tests {
                 period: p,
                 big_change: (sim % p) > 0.05 && (sim % p) < 0.07,
                 reduced_motion: false,
+                place: None,
             };
             if let Some(c) = d.step(m) {
                 cues.push((sim, c));
@@ -408,5 +496,73 @@ mod tests {
             h.step(dt, true);
         }
         assert_eq!(h.speed(), 1.0);
+    }
+
+    #[test]
+    fn a_mapped_song_changes_with_its_sections_and_phrases() {
+        use crate::structure::{Section, Structure};
+        // Intro (8 bars, -6 dB), drop (24 bars), breakdown (16 bars, -8 dB), drop again.
+        let shape = Structure {
+            bar: 1,
+            sections: vec![
+                Section {
+                    beat: 1,
+                    level: -6.0,
+                },
+                Section {
+                    beat: 33,
+                    level: 0.0,
+                },
+                Section {
+                    beat: 129,
+                    level: -8.0,
+                },
+                Section {
+                    beat: 193,
+                    level: 0.0,
+                },
+            ],
+        };
+        let p = 0.5;
+        let mut d = Director::new(Rng::new(9));
+        let mut cues = Vec::new();
+        for i in 0..260 {
+            for f in 0..(p * FPS) as usize {
+                let sim = i as f64 * p + f as f64 / FPS;
+                let m = Moment {
+                    sim,
+                    music: true,
+                    beat: f == 0,
+                    period: p,
+                    big_change: f == 3,
+                    reduced_motion: false,
+                    place: Some(shape.place(i)),
+                };
+                if let Some(c) = d.step(m) {
+                    cues.push((i, c));
+                }
+            }
+        }
+        let at = |beat: usize| cues.iter().find(|(i, _)| *i == beat).map(|(_, c)| *c);
+        // Every change lands on a downbeat; drops and moods guessed live are ignored.
+        assert!(cues.iter().all(|(i, _)| (i - 1) % 4 == 0), "{cues:?}");
+        // Into the drop: a quick two-trait new scene. Into the breakdown: a slow one.
+        let drop = at(33).expect("scene at the drop");
+        assert_eq!(
+            (drop.scope, drop.n, drop.dur),
+            (Scope::Scene, Some(2), Some(1.0))
+        );
+        let calm = at(129).expect("scene at the breakdown");
+        assert_eq!((calm.scope, calm.dur), (Scope::Scene, Some(4.0)));
+        // In the drop, a detail every four bars, and a new scene after sixteen.
+        assert_eq!(at(49).map(|c| c.scope), Some(Scope::Detail));
+        assert_eq!(at(65).map(|c| c.scope), Some(Scope::Detail));
+        assert_eq!(at(97).map(|c| c.scope), Some(Scope::Scene));
+        assert!(at(37).is_none() && at(53).is_none());
+        // In the quiet breakdown, every eight bars.
+        assert!(at(145).is_none());
+        assert_eq!(at(161).map(|c| c.scope), Some(Scope::Detail));
+        // Far calmer than counting beats: 260 beats at 120 bpm, about 16 changes.
+        assert!(cues.len() <= 18, "{} changes", cues.len());
     }
 }

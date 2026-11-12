@@ -16,6 +16,7 @@ pub mod loudness;
 pub mod quality;
 pub mod reactions;
 pub mod rng;
+pub mod structure;
 pub mod tempo;
 pub mod traits;
 pub mod uniforms;

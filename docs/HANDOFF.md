@@ -25,6 +25,9 @@ Last updated: 2026-11-11 (media player branch).
      (see Decisions) and peaks land at 33–50 ms, before display latency, which
      `BEAT_LEAD` offsets. The user tested it locally and approved it; it shipped as
      v0.1.1.
+  5. On `media-player`, with whole-track beat maps: the look follows the song's
+     sections and phrases, and reaction strength knows how loud the song gets (see
+     Decisions). **Ask the user how it feels.**
 - **v0.1.2 (in review as a PR, not yet tagged)** fixes two user reports:
   1. *"If system audio stops, the app may enter a desperation phase of rapid visualizer
      shifting."* Simulated (`tests/music_stops.rs`): after the music stopped, the old
@@ -110,7 +113,9 @@ Last updated: 2026-11-11 (media player branch).
 | `src/vibe.rs` | Intensity, heaviness, mood, `level` (loudness against the last minute) |
 | `src/reactions.rs` | `Pulse::frame`: audio → per-frame `Visual` modifiers. Comfort rules live here |
 | `src/traits.rs` | Trait catalog, crossfades, shuffle-bag scheduling, variety guard (`flatness`) |
-| `src/director.rs` | *When* shifts happen: on the beat with music, a slow drift without it; `Halt` stops everything in silence |
+| `src/director.rs` | *When* shifts happen: with a song map, by section and phrase; with live music, on the beat; a slow drift without it; `Halt` stops everything in silence |
+| `src/structure.rs` | A mapped track's bars (downbeat phase) and sections (start beat, level) from per-beat band fingerprints |
+| `src/loudness.rs` | BS.1770 integrated loudness and peak, measured in the beat-map decode |
 | `src/shader.wgsl` / `src/uniforms.rs` | Rendering; the uniform layout is checked against the WGSL by `tests/shader.rs` |
 | `src/demo.rs` | 120 bpm house loop. **The only ground truth for the analysis tests** |
 | `src/app/` | Window, audio devices, HUD, frame loop (`mod.rs::step`) |
@@ -121,6 +126,7 @@ Last updated: 2026-11-11 (media player branch).
 | `examples/library_probe.rs` | Tag coverage and browse-view grouping of a saved catalog (the user's `library.json`) |
 | `examples/beatmap_probe.rs` | Beat-map local files; `--write-demo` + `--demo-grid` score encoded demo files |
 | `examples/pulse_probe.rs` | Measures kick accuracy and how well each visual signal pulses |
+| `examples/watch_probe.rs` | Plays local files through the whole chain (map, vibe, director, traits) and measures pacing: changes/min, bar alignment, sections met, time mid-change, reaction gain per section (`--log`) |
 | `examples/look_probe.rs` | Renders the scheduler's looks on the GPU and measures how often they're flat |
 | `examples/common/headless.rs` | Headless scene rendering shared by `screenshots` and `look_probe` |
 | `tests/music_stops.rs` | Demo, then the audio stops three ways; the picture must settle |
@@ -170,9 +176,36 @@ it to the shader. The flow clock `flow_t` advances by the Tempo trait plus
   kept out of the front for the rest of the current shift plus a full next shift. An
   arrow click counts as that trait's turn.
 
-- **Pacing without music is a comfort rule (`src/director.rs`).** With music: shifts on
-  the beat every 4 or 8 beats, never two within `MIN_GAP`; a drop or mood change restarts
-  the beat count so it doesn't stack. Music without a beat drifts on a 7-11 s timer (it
+- **With a song map, the look follows the song (`structure.rs`, `Director::with_map`).**
+  Measured on 40 min of local tracks, the old beat-count pacing changed the look 18.7
+  times a minute, kept a trait mid-change 48% of the time (two at once 27%), landed on
+  a bar line no more than chance, and fired "big" changes on live mood flips (up to 10
+  per track). Now:
+  - *Structure:* each beat's fingerprint is the mean log energy in the mapper's 8
+    bands. The downbeat is the phase (of 4) where the bar-to-bar change is largest.
+    Sections start at downbeats where 4 bars after differ from 4 bars before by
+    ≥1.6× the track's median and ≥0.25 ln/band, the biggest within ±2 bars, ≥4 bars
+    apart. Levels are dB under the loudest section. On real tracks the starts fall on
+    8-bar phrase lines (e.g. 15.2/30.5/61.0 s at 126 bpm).
+  - *Pacing:* a section start brings a Scene shift (Field, Palette, Symmetry, Effect,
+    Scale, Mosaic): 2 traits over 2 beats into a rise of ≥3 dB, 2 over 8 beats into a
+    fall, else 1 over 4. A Detail shift (the other traits) every 4 bars, 8 in sections
+    >3 dB down; a Scene shift every 16 bars of a long section. Only on downbeats.
+    Live drop/mood guesses are ignored. Result: 7.2/min, 100% on bar lines, 95% of
+    section starts met by a new scene, mid-change 25% (two at once 4%).
+  - *Level:* `Vibe::know_section` raises the loudness reference to what the section's
+    dB implies, so a quiet intro reacts gently from the start (−9 dB intro: gain 1.14 →
+    0.59) and the drop stands out. It waits 4 bars after a fall (the slow level would
+    overstate the peak).
+  - Mood is still the live vibe's, so a scene change at a drop is picked with the
+    previous section's mood bias (see Open items).
+- **Pacing without music is a comfort rule (`src/director.rs`).** With live music:
+  shifts on the beat every 8 or 16 beats (was 4 or 8: 17.6/min → 11.3/min, mid-change
+  46% → 30%), never two within `MIN_GAP`; a drop or mood change (at most every
+  `BIG_GAP`, 16 s) restarts the beat count so it doesn't stack. Pacing counts as music
+  only while `is_sounding` (fast level within 10 dB of the slow one): the beat clock
+  ticks on after a stop, and the longer count once landed a shift 0.5 s after the
+  music ended. Music without a beat drifts on a 7-11 s timer (it
   used to freeze). Without music: hold still `SETTLE` (12 s), then one trait every 12-20 s
   with 6-9 s crossfades, picks biased to the Ambient mood (calm energy, slow tempo).
   Reduce motion doubles the holds. Startup without audio still makes its first change at
@@ -297,6 +330,9 @@ it to the shader. The flow clock `flow_t` advances by the Tempo trait plus
 | `TEMPO_WINDOW` (8 s), `TEMPO_STEP` (1 s), `TEMPO_CHANGE` (40), `GLOBAL_PULL` (0.3) | beatmap.rs | Tempo curve: resolution, how readily it changes, how firmly breakdowns hold |
 | `TAG_BYTES` (256 KB), `BACKUP_EVERY` (10 min) | app/library.rs | Tag crawl read size; how often the backup is written |
 | `TARGET_LUFS` (−14) | app/player.rs | Playback loudness every track is leveled to |
+| `PHRASE_BARS` (4), `QUIET_PHRASE_BARS` (8), `QUIET_SECTION_DB` (3), `SCENE_BARS` (16), `SECTION_JUMP_DB` (3) | director.rs | Mapped pacing: bars between details, when a section counts as quiet, scene refresh in long sections, what counts as a drop or breakdown |
+| `PEAK_OVER_TYPICAL` (1.6), `MIN_CHANGE` (0.25), `MIN_SECTION` (16 beats) | structure.rs | How readily a section boundary is found |
+| `BIG_GAP` (16 s), beats per live shift (8 or 16) | director.rs | Live pacing |
 
 Baseline from `cargo run --release --example pulse_probe` at this point. Since the "more
 direct" work, the probe measures against the demo's **true kick times** (earlier
@@ -333,6 +369,15 @@ error against the true grid):
 Unchanged by the tempo curve (0.06 s analysis per minute). Synthetic tempo changes
 (`follows_a_tempo_change`): 112→136, ramp 118→134, 128→96 all 100%, 100→140 98% of
 beats within 15 ms.
+
+Pacing baseline from `watch_probe` on the 16 local tracks in `~/TheoTown/music` plus
+the demo (40 min, 3 seeds):
+
+| Mode | Changes/min | Median gap | On a bar line | Sections met | Mid-change (2+) |
+|---|---|---|---|---|---|
+| Before (map beats, beat count) | 18.7 | 3.3 s | 27% | 27/258 | 48% (27%) |
+| Media player (structure) | 7.2 | 7.9 s | 100% | 245/258 | 25% (4%) |
+| System audio (8/16 beats) | 11.3 | 4.4 s | 42% | 27/258 | 30% (18%) |
 
 ## Verifying
 
@@ -376,6 +421,10 @@ beats within 15 ms.
   (pure-Rust chromaprint port, needs an app key, whole-file download) for the rest.
   Either breaks the "only Dropbox" privacy claim on the site: make it opt-in.
 - The website screenshots don't show the player yet (`mise run screenshots`).
+- Mapped pacing: ask the user how it feels (calmer, changes at the right moments?).
+  Next steps if wanted: a mood per section computed offline (the live mood lags a
+  section change, so the new scene is picked with the old mood), and a 3/4 bar.
+- Maps from before `MAP_VERSION` 3 have no structure; they're redone on next play.
 
 - Confirm with the user that the silence fix matches what they saw, and that the looks
   feel less flat in practice (the probe's thresholds are a proxy).
@@ -456,3 +505,8 @@ beats within 15 ms.
     lookup deferred (see Open items).
   - ReplayGain is rare (2.3%); user agreed to measuring loudness during beat-map
     analysis. Added `src/loudness.rs` and leveling to −14 LUFS.
+  - User: with better beat tracking, revisit how the picture reacts: engaging with the
+    vibe, no weird hard-to-watch sequences. Measured with a new `watch_probe`: the look
+    was mid-change half the time. Added song structure to the map (bars, sections),
+    section-and-phrase pacing for mapped tracks, section-aware reaction strength, and
+    calmer live pacing.
