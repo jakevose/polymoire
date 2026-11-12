@@ -12,6 +12,7 @@ pub mod demo;
 pub mod director;
 pub mod dsp;
 pub mod library;
+pub mod loudness;
 pub mod quality;
 pub mod reactions;
 pub mod rng;

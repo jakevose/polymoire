@@ -4,6 +4,7 @@
 
 use super::names::{genres, Credits};
 use crate::beatmap::BeatMap;
+use crate::loudness::Loudness;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
@@ -95,6 +96,8 @@ pub struct Track {
     pub last_played: u64,
     /// The full scan that last listed this file (`ScanState::pass`).
     pub seen: u32,
+    /// Measured when the track was analyzed; levels its volume.
+    pub loudness: Option<Loudness>,
 }
 
 impl Track {

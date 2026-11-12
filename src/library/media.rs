@@ -2,6 +2,7 @@
 
 use super::catalog::{Tags, TAGS_VERSION};
 use crate::beatmap::{BeatMap, Tracker};
+use crate::loudness::{Loudness, Meter};
 use std::io::Cursor;
 use std::sync::Arc;
 use symphonia::core::codecs::audio::{AudioDecoder, AudioDecoderOptions};
@@ -176,10 +177,20 @@ impl Decoder {
 }
 
 /// Decode a whole track once: its beat map (None if it has no steady beat) and duration.
-pub fn analyze(bytes: Arc<Vec<u8>>, ext: &str) -> Result<(Option<BeatMap>, f32)> {
+/// What one decode of a whole track learns.
+pub struct Analysis {
+    pub map: Option<BeatMap>,
+    /// Seconds.
+    pub duration: f32,
+    pub loudness: Option<Loudness>,
+}
+
+/// Decode the whole track once: beat map, duration and loudness.
+pub fn analyze(bytes: Arc<Vec<u8>>, ext: &str) -> Result<Analysis> {
     let mut d = Decoder::new(bytes, ext)?;
     let rate = d.rate;
     let mut tracker = Tracker::new(rate as f32);
+    let mut meter = Meter::new(rate as f32);
     let mut mono = Vec::new();
     let mut frames = 0u64;
     while let Some((block, ch)) = d.next_block() {
@@ -187,6 +198,11 @@ pub fn analyze(bytes: Arc<Vec<u8>>, ext: &str) -> Result<(Option<BeatMap>, f32)>
         mono.extend(block.chunks(ch).map(|f| f.iter().sum::<f32>() / ch as f32));
         frames += mono.len() as u64;
         tracker.push(&mono);
+        meter.push(block, ch);
     }
-    Ok((tracker.finish(), frames as f32 / rate as f32))
+    Ok(Analysis {
+        map: tracker.finish(),
+        duration: frames as f32 / rate as f32,
+        loudness: meter.finish(),
+    })
 }

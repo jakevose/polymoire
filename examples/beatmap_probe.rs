@@ -31,7 +31,14 @@ fn main() {
         }
         let started = Instant::now();
         match media::analyze(bytes, &ext) {
-            Ok((Some(m), secs)) => {
+            Ok(media::Analysis {
+                map: Some(m),
+                duration: secs,
+                loudness,
+            }) => {
+                if let Some(l) = loudness {
+                    println!("  loudness {:.1} LUFS, peak {:.1} dBFS", l.lufs, l.peak_db);
+                }
                 println!(
                     "  {:.2} bpm, {} beats over {secs:.1} s, analyzed in {:.2} s",
                     m.bpm,
@@ -72,7 +79,7 @@ fn main() {
                     );
                 }
             }
-            Ok((None, secs)) => println!("  no steady beat found ({secs:.1} s)"),
+            Ok(a) => println!("  no steady beat found ({:.1} s)", a.duration),
             Err(e) => println!("  {e}"),
         }
     }

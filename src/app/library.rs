@@ -396,14 +396,17 @@ impl Library {
         let (fetched, started) = self.player.update(&self.catalog, self.dbx.as_ref());
         for f in fetched {
             match f {
-                Fetched::Analysis(id, map, secs, tags) => {
-                    if let Some(map) = map {
-                        self.catalog.set_beats(&id, &map);
+                Fetched::Analysis(id, a, tags) => {
+                    if let Some(map) = &a.map {
+                        self.catalog.set_beats(&id, map);
                     }
                     if let Some(tags) = tags {
-                        self.catalog.set_tags(&id, tags, secs);
+                        self.catalog.set_tags(&id, tags, a.duration);
                     } else if let Some(t) = self.catalog.tracks.get_mut(&id) {
-                        t.duration = secs;
+                        t.duration = a.duration;
+                    }
+                    if let Some(t) = self.catalog.tracks.get_mut(&id) {
+                        t.loudness = a.loudness;
                     }
                     self.changed();
                 }

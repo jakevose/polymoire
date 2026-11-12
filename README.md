@@ -57,8 +57,10 @@ How it behaves:
   tempo changes. The map is saved (about a byte per beat), so each track is analyzed
   once. Until it's ready, the live beat tracker
   fills in.
-- **Even volume.** Tracks with ReplayGain tags are turned down to meet quieter ones
-  (never up, so nothing clips). Tracks without it play as they are.
+- **Even volume.** Each track's loudness is measured when it's analyzed for beats, and
+  it plays at the same level as the others: loud masters come down, quiet ones come up
+  only as far as they can without clipping. Before a track is measured, ReplayGain tags
+  are used if it has them.
 - **A still picture between songs.** When the track changes, the picture holds still
   until the next one starts making sound.
 - **Gentle on your Dropbox.** The first scan of a big library shows how far it has got

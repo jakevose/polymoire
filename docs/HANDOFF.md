@@ -229,8 +229,14 @@ it to the shader. The flow clock `flow_t` advances by the Tempo trait plus
   - *Path guesses* read release folder names ("Artist - Album (2018) [FLAC]", scene
     "VA-Album-WEB-FLAC-2022", disc subfolders) and are redone on load for unread files.
     On the user's library: "Unknown artist" 3,524 → 193, "No year" 9,087 → 3,702.
-  - *ReplayGain:* applied as gain + 6 dB, capped at 0 dB: loud masters come down to
-    meet quiet ones, nothing is boosted. Files without it play unchanged.
+  - *Leveling:* ReplayGain is rare in the user's files (2.3%), so loudness (BS.1770
+    integrated, per channel, gated) is measured in the same decode as the beat map
+    and stored on the track (`Track.loudness`; tracks without it are re-analyzed on
+    play). Played at `TARGET_LUFS` −14, boosts limited to 1 dB under the sample peak,
+    ±15 dB. Gain glides over 150 ms when the measurement arrives mid-track. Until
+    measured: ReplayGain + 4 dB, cut only. Matches ffmpeg's ebur128 within 0.1 dB on
+    mono, stereo and wide-stereo files (an earlier mono-mix version read wide stereo
+    3 dB low).
   - *Track change and pause hold:* in player mode the picture freezes (like Pause)
     from a change of track, or a pause of the player, until the track is heard and the
     analyzer reports sound (user request). While held, the frame carries the last
@@ -290,6 +296,7 @@ it to the shader. The flow clock `flow_t` advances by the Tempo trait plus
 | `TIGHTNESS` (100), `STRONG` (0.5× median), `HOP` (256) | beatmap.rs | Beat map grid rigidity; what counts as a heard beat; time resolution |
 | `TEMPO_WINDOW` (8 s), `TEMPO_STEP` (1 s), `TEMPO_CHANGE` (40), `GLOBAL_PULL` (0.3) | beatmap.rs | Tempo curve: resolution, how readily it changes, how firmly breakdowns hold |
 | `TAG_BYTES` (256 KB), `BACKUP_EVERY` (10 min) | app/library.rs | Tag crawl read size; how often the backup is written |
+| `TARGET_LUFS` (−14) | app/player.rs | Playback loudness every track is leveled to |
 
 Baseline from `cargo run --release --example pulse_probe` at this point. Since the "more
 direct" work, the probe measures against the demo's **true kick times** (earlier
@@ -368,12 +375,6 @@ beats within 15 ms.
   User-Agent with the repo URL) for files with a usable title; AcoustID fingerprints
   (pure-Rust chromaprint port, needs an app key, whole-file download) for the rest.
   Either breaks the "only Dropbox" privacy claim on the site: make it opt-in.
-- ReplayGain is rare in the user's files (2.3% of 1,344 re-read). Leveling will do
-  little; measuring loudness during beat-map analysis would cover every played track.
-- Tags: files already read are being read again for the compilation flag and
-  ReplayGain (`TAGS_VERSION` 2, after the unread ones). Run `library_probe` on the
-  user's `library.json` once that's well along: if few files have ReplayGain, the
-  leveling does little, and the user might want it computed from the audio instead.
 - The website screenshots don't show the player yet (`mise run screenshots`).
 
 - Confirm with the user that the silence fix matches what they saw, and that the looks
@@ -453,3 +454,5 @@ beats within 15 ms.
     guesses (disc-track numbers, numbered box-set folders, year-first folders): fixed,
     25 → 2 (real). Tag reads 4 at a time so real tags replace guesses sooner. Online
     lookup deferred (see Open items).
+  - ReplayGain is rare (2.3%); user agreed to measuring loudness during beat-map
+    analysis. Added `src/loudness.rs` and leveling to −14 LUFS.

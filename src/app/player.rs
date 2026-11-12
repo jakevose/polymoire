@@ -26,7 +26,7 @@ type Cache = Arc<Mutex<Vec<(String, Arc<Vec<u8>>)>>>;
 pub enum Fetched {
     Bytes(String, Arc<Vec<u8>>),
     /// Beat map, duration and (from the whole file) tags.
-    Analysis(String, Option<BeatMap>, f32, Option<Tags>),
+    Analysis(String, media::Analysis, Option<Tags>),
     Failed(String, String),
 }
 
@@ -42,8 +42,9 @@ struct Deck {
     playing: bool,
     ended: bool,
     volume: f32,
-    /// This track's ReplayGain leveling, as a factor.
+    /// This track's volume leveling, as a factor, gliding toward `gain_target`.
     gain: f32,
+    gain_target: f32,
     seek: Option<f64>,
     /// (track time at the end of the last block, when it was handed over, output latency).
     anchor: Option<(f64, Instant, f64)>,
@@ -65,6 +66,8 @@ impl Deck {
             return;
         }
         let ratio = dec.rate as f64 / out_rate;
+        // Gain changes glide over about half a second.
+        let glide = (1.0 / (0.15 * out_rate)) as f32;
         for frame in out.chunks_mut(out_ch) {
             let i = self.frac as usize;
             while (i + 2) * self.src_ch > self.src.len() {
@@ -85,6 +88,7 @@ impl Deck {
                 let (x, y) = (self.src[i * ch + c], self.src[(i + 1) * ch + c]);
                 x + (y - x) * a
             };
+            self.gain += (self.gain_target - self.gain) * glide;
             for (c, o) in frame.iter_mut().enumerate() {
                 *o = at(c.min(ch - 1)) * self.volume * self.gain;
             }
@@ -134,6 +138,7 @@ impl Player {
                 ended: false,
                 volume,
                 gain: 1.0,
+                gain_target: 1.0,
                 seek: None,
                 anchor: None,
             })),
@@ -283,7 +288,8 @@ impl Player {
         let Some(t) = cat.tracks.get(id) else { return };
         let busy = |v: &Vec<String>| v.iter().any(|i| i == id);
         let stale = t.beats.as_ref().is_none_or(|b| b.v != MAP_VERSION);
-        let needs_analysis = (stale || t.duration <= 0.0) && !busy(&self.analyzing);
+        let needs_analysis =
+            (stale || t.duration <= 0.0 || t.loudness.is_none()) && !busy(&self.analyzing);
         let hit = self.cached(id);
         if busy(&self.downloading) || (hit.is_some() && !needs_analysis) {
             return;
@@ -320,7 +326,7 @@ impl Player {
             if needs_analysis {
                 let tags = media::read_tags(bytes.clone(), &ext).ok().map(|(t, _)| t);
                 let msg = match media::analyze(bytes, &ext) {
-                    Ok((map, secs)) => Fetched::Analysis(id, map, secs, tags),
+                    Ok(a) => Fetched::Analysis(id, a, tags),
                     Err(e) => Fetched::Failed(id, e),
                 };
                 let _ = tx.send(msg);
@@ -331,7 +337,7 @@ impl Player {
     fn open(&mut self, id: &str, bytes: Arc<Vec<u8>>, cat: &Catalog) {
         let track = cat.tracks.get(id);
         let ext = track.map(|t| t.ext().to_lowercase()).unwrap_or_default();
-        let gain = leveling(track.and_then(|t| t.tags.gain));
+        let gain = track.map_or(1.0, leveling);
         match Decoder::new(bytes, &ext) {
             Ok(dec) => {
                 if let Err(e) = self.ensure_stream() {
@@ -341,6 +347,7 @@ impl Player {
                 let mut d = self.deck();
                 d.dec = Some(dec);
                 d.gain = gain;
+                d.gain_target = gain;
                 d.src.clear();
                 d.frac = 0.0;
                 d.pos = 0.0;
@@ -370,10 +377,14 @@ impl Player {
                     }
                     continue;
                 }
-                Fetched::Analysis(id, map, ..) => {
+                Fetched::Analysis(id, a, _) => {
                     self.analyzing.retain(|i| i != id);
                     if self.current.as_deref() == Some(id) {
-                        self.map = map.clone();
+                        self.map = a.map.clone();
+                        // Measured mid-play (a first play): glide to the level.
+                        if let Some(l) = a.loudness {
+                            self.deck().gain_target = db_to_gain(l.gain_to(TARGET_LUFS));
+                        }
                     }
                 }
                 Fetched::Failed(id, e) => {
@@ -461,13 +472,22 @@ impl Player {
     }
 }
 
-/// ReplayGain targets a quiet reference level, so its gains are mostly cuts of 6–10 dB
-/// for modern masters. With this head start, loud tracks come down to meet quiet ones,
-/// and nothing is ever boosted (no clipping). Tracks without ReplayGain play as they are.
-const LEVELING_HEADROOM_DB: f32 = 6.0;
+/// Every track is leveled to this loudness (a common streaming level): loud masters
+/// come down, quiet ones come up as far as their peaks allow.
+const TARGET_LUFS: f32 = -14.0;
+/// ReplayGain levels to about -18 LUFS; this moves its gains to the same target.
+const REPLAYGAIN_TO_TARGET_DB: f32 = 4.0;
 
-fn leveling(gain_db: Option<f32>) -> f32 {
-    gain_db.map_or(1.0, |g| {
-        10f32.powf((g + LEVELING_HEADROOM_DB) / 20.0).min(1.0)
-    })
+/// The track's leveling as a gain factor: measured loudness first, then a ReplayGain
+/// tag (cut only, since its peak isn't known), else unchanged.
+fn leveling(t: &polymoire::library::catalog::Track) -> f32 {
+    match (t.loudness, t.tags.gain) {
+        (Some(l), _) => db_to_gain(l.gain_to(TARGET_LUFS)),
+        (None, Some(g)) => db_to_gain((g + REPLAYGAIN_TO_TARGET_DB).min(0.0)),
+        (None, None) => 1.0,
+    }
+}
+
+fn db_to_gain(db: f32) -> f32 {
+    10f32.powf(db / 20.0)
 }
