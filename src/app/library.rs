@@ -16,6 +16,8 @@ use std::time::{Duration, Instant, SystemTime};
 
 /// Tags are read from the start of each file; most tag blocks fit in this.
 const TAG_BYTES: u64 = 256 * 1024;
+/// Tag reads at once.
+const TAG_READS: usize = 4;
 /// Largest tag block worth a second request (big embedded cover art).
 const MAX_TAG_BYTES: u64 = 4 << 20;
 /// Save the local cache this long after a change.
@@ -79,7 +81,8 @@ pub struct Library {
     run: u64,
     cancel: Arc<AtomicBool>,
     restore_tried: bool,
-    tagging: bool,
+    /// Tag reads in flight.
+    tagging: usize,
     tried: HashSet<String>,
     changed_at: Option<Instant>,
     backup_due: bool,
@@ -135,7 +138,7 @@ impl Library {
             run: 0,
             cancel: Arc::new(AtomicBool::new(false)),
             restore_tried: false,
-            tagging: false,
+            tagging: 0,
             tried: HashSet::new(),
             changed_at: None,
             backup_due: false,
@@ -355,10 +358,11 @@ impl Library {
         self.backup_due = true;
     }
 
-    /// Read the next untagged file's tags (one at a time, so the crawl stays gentle).
+    /// Start reading the next untagged file's tags, a few at a time (each is one small
+    /// ranged download; Dropbox rate-limits well above this). One start per frame.
     fn crawl(&mut self) {
         let Some(dbx) = self.dbx.clone() else { return };
-        if self.tagging || self.syncing {
+        if self.tagging >= TAG_READS || self.syncing {
             return;
         }
         let Some(t) = self
@@ -369,7 +373,7 @@ impl Library {
             return;
         };
         self.tried.insert(t.id.clone());
-        self.tagging = true;
+        self.tagging += 1;
         let (id, ext) = (t.id.clone(), t.ext().to_lowercase());
         spawn(&self.tx, move || {
             let res = dbx.download(&id, Some(TAG_BYTES)).and_then(|mut b| {
@@ -505,7 +509,7 @@ impl Library {
             }
             Event::Restored(..) | Event::Scan(..) | Event::Synced(..) => {}
             Event::Tagged(id, res) => {
-                self.tagging = false;
+                self.tagging -= 1;
                 if let Ok((tags, secs)) = res {
                     self.catalog.set_tags(&id, tags, secs);
                     self.changed();

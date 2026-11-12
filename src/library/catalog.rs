@@ -631,22 +631,41 @@ pub fn guess_tags(root: &str, path: &str) -> Tags {
     let name = parts.last().copied().unwrap_or("");
     let stem = name.rsplit_once('.').map_or(name, |(s, _)| s);
     let digits: String = stem.chars().take_while(|c| c.is_ascii_digit()).collect();
-    let title = stem[digits.len()..]
-        .trim_start_matches([' ', '-', '.', '_'])
-        .trim();
+    let mut rest = &stem[digits.len()..];
+    let mut track_no = if digits.len() <= 3 {
+        digits.parse().unwrap_or(0)
+    } else {
+        0
+    };
+    let mut disc = 0;
+    // "2-05 Title", "1.09 - Title", "03-01 - Title": disc, then track.
+    if (1..=2).contains(&digits.len()) {
+        if let Some(after) = rest.strip_prefix(['-', '.']) {
+            let t: String = after.chars().take_while(|c| c.is_ascii_digit()).collect();
+            if (1..=3).contains(&t.len()) && (digits.len() == 1 || t.len() >= 2) {
+                disc = track_no;
+                track_no = t.parse().unwrap_or(0);
+                rest = &after[t.len()..];
+            }
+        }
+    }
+    let title = rest.trim_start_matches([' ', '-', '.', '_']).trim();
     let mut tags = Tags {
         title: if title.is_empty() { stem } else { title }.to_string(),
-        track_no: if digits.len() <= 3 {
-            digits.parse().unwrap_or(0)
-        } else {
-            0
-        },
+        track_no,
+        disc,
         ..Default::default()
     };
-    // "Artist - Title" file names.
+    // "Artist - Title" file names (but "05 - Title" is a number, not an artist).
     if let Some((a, t)) = tags.title.clone().split_once(" - ") {
-        tags.artist = a.trim().to_string();
-        tags.title = t.trim().to_string();
+        if !a
+            .trim()
+            .chars()
+            .all(|c| c.is_ascii_digit() || " .-_".contains(c))
+        {
+            tags.artist = a.trim().to_string();
+            tags.title = t.trim().to_string();
+        }
     }
     // The album folder: the nearest one above the file that isn't a disc folder.
     let mut folders = &parts[..parts.len() - 1];
@@ -677,7 +696,12 @@ pub fn guess_tags(root: &str, path: &str) -> Tags {
         Some(_) => {}
         None => {
             if let Some(parent) = above.last().filter(|_| tags.artist.is_empty()) {
-                tags.artist = parse_release(parent).album;
+                // "Artist - Box Set/07 - Show": the box set names the artist.
+                let p = parse_release(parent);
+                tags.artist = p.artist.unwrap_or(p.album);
+                if tags.year == 0 {
+                    tags.year = p.year;
+                }
             }
         }
     }
@@ -754,13 +778,14 @@ fn parse_release(dir: &str) -> Release {
         rest = &rest[j + 1..];
     }
     name.push_str(rest);
-    // Scene style: hyphens without spaces, format words at the end.
-    if !name.contains(" - ") && name.matches('-').count() >= 2 {
-        let parts: Vec<&str> = name.split('-').collect();
-        let keep = parts
-            .iter()
-            .rposition(|p| !is_format(p))
-            .map_or(0, |k| k + 1);
+    // Scene style: hyphens without spaces, format words at the end (not a date like
+    // "5-7-77 Boston Garden").
+    let parts: Vec<&str> = name.split('-').collect();
+    let keep = parts
+        .iter()
+        .rposition(|p| !is_format(p))
+        .map_or(0, |k| k + 1);
+    if !name.contains(" - ") && parts.len() >= 3 && keep < parts.len() {
         for p in &parts[keep..] {
             if let Some(y) = year_of(p) {
                 year = y;
@@ -768,13 +793,26 @@ fn parse_release(dir: &str) -> Release {
         }
         name = parts[..keep].join(" - ");
     }
-    // Drop trailing " - WEB FLAC" style pieces.
+    // Drop trailing " - WEB FLAC" style pieces, and a leading year ("2014 - A - B").
     let mut pieces: Vec<&str> = name.split(" - ").map(str::trim).collect();
+    if pieces.len() >= 3 {
+        if let Some(y) = year_of(pieces[0]).filter(|_| pieces[0].len() == 4) {
+            year = year.max(y);
+            pieces.remove(0);
+        }
+    }
     while pieces.len() > 1 && pieces.last().is_some_and(|p| p.is_empty() || is_format(p)) {
         pieces.pop();
     }
     let clean = |s: &str| s.trim().trim_matches(['-', ' ', '_']).to_string();
+    let numbered = |p: &str| p.chars().all(|c| c.is_ascii_digit() || " .-_".contains(c));
     match pieces.as_slice() {
+        // "07 - Philadelphia Spectrum": a numbered part of a set, not an artist.
+        [n, album @ ..] if !album.is_empty() && numbered(n) => Release {
+            artist: None,
+            album: clean(&album.join(" - ")),
+            year,
+        },
         [artist, album @ ..] if !album.is_empty() => Release {
             artist: Some(clean(artist)).filter(|a| !a.is_empty()),
             album: clean(&album.join(" - ")),
@@ -1060,6 +1098,46 @@ mod tests {
                 0,
                 false,
                 0
+            )
+        );
+        // Disc-track numbers and year-first folders.
+        assert_eq!(
+            g("/M/Röyksopp - Melody A.M. (2001) [FLAC]/2-05 - Eple (Fatboy Slim Remix).mp3"),
+            ("Röyksopp".into(), "Melody A.M.".into(), 2001, false, 2)
+        );
+        let t = guess_tags("/M", "/M/BT - Trees (2023)/2.08 - Embers.mp3");
+        assert_eq!((t.disc, t.track_no, t.title.as_str()), (2, 8, "Embers"));
+        let t = guess_tags("/M", "/M/Moby - 18 (2015)/12. 18.mp3");
+        assert_eq!(
+            (t.track_no, t.title.as_str(), t.artist.as_str()),
+            (12, "18", "Moby")
+        );
+        assert_eq!(
+            g("/M/2014 - D'Angelo And The Vanguard - Black Messiah (2016 - SICP-4770-1) FLAC/Disc 1/01 Ain't That Easy.mp3").0,
+            "D'Angelo And The Vanguard"
+        );
+        // Box sets: numbered show folders and date folders.
+        let gd = |p: &str| guess_tags("/M", p);
+        let t = gd("/M/Grateful Dead - Enjoying the Ride (2025) [FLAC]/07 - Philadelphia Spectrum, PA 5-13-78/Disc 20/01 - Bertha.mp3");
+        assert_eq!(
+            (t.artist.as_str(), t.album.as_str(), t.disc),
+            ("Grateful Dead", "Philadelphia Spectrum, PA 5-13-78", 20)
+        );
+        let t = gd("/M/Grateful Dead - May 1977 (2017) [96-24]/5-7-77 Boston Garden, Boston, MA/03-01 - Bertha.mp3");
+        assert_eq!(
+            (
+                t.artist.as_str(),
+                t.album.as_str(),
+                t.disc,
+                t.track_no,
+                t.title.as_str()
+            ),
+            (
+                "Grateful Dead",
+                "5-7-77 Boston Garden, Boston, MA",
+                3,
+                1,
+                "Bertha"
             )
         );
         // A file named "Artist - Title" in a compilation keeps its own artist.

@@ -25,6 +25,24 @@ fn main() {
         pct(&|t| t.tags.gain.is_some()),
         tagged.iter().filter(|t| t.tags.v >= polymoire::library::catalog::TAGS_VERSION).count(),
     );
+    let numeric: Vec<String> = c
+        .groups(View::Artists, "")
+        .into_iter()
+        .filter(|g| {
+            g.label
+                .chars()
+                .all(|ch| ch.is_ascii_digit() || " .-_()".contains(ch))
+        })
+        .map(|g| {
+            let example = c
+                .list(View::Artists, Some(&g.key), "")
+                .first()
+                .map(|id| c.tracks[id].path.clone())
+                .unwrap_or_default();
+            format!("{} ({}, e.g. {example})", g.label, g.count)
+        })
+        .collect();
+    println!("numeric-looking artists:\n  {}", numeric.join("\n  "));
     for v in [
         View::Artists,
         View::Albums,
@@ -40,7 +58,14 @@ fn main() {
         let top: Vec<String> = top
             .iter()
             .take(12)
-            .map(|g| format!("{} ({})", g.label, g.count))
+            .map(|g| {
+                let example = c
+                    .list(View::Artists, Some(&g.key), "")
+                    .first()
+                    .map(|id| c.tracks[id].path.clone())
+                    .unwrap_or_default();
+                format!("{} ({}, e.g. {example})", g.label, g.count)
+            })
             .collect();
         println!(
             "{:?}: {} groups in {ms:.0} ms; biggest: {}",

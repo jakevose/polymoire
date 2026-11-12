@@ -222,6 +222,10 @@ it to the shader. The flow clock `flow_t` advances by the Tempo trait plus
     on "/;," and merge by alphanumerics, minus a trailing "music", plus a few aliases
     (DnB, R&B). Labels are each group's most common spelling. Views are cached in
     `Library` against a revision bumped on every catalog change (16k tracks: 25 ms).
+  - *Path guesses* also handle disc-track file names ("2-05", "1.09", "03-01"),
+    numbered set folders ("07 - Show" → artist from the box set above), year-first
+    folders ("2014 - Artist - Album"), and leave dates ("5-7-77 Boston") alone. On
+    the user's library numeric "artists" went 25 → 2 (both real). Tags read 4 at a time.
   - *Path guesses* read release folder names ("Artist - Album (2018) [FLAC]", scene
     "VA-Album-WEB-FLAC-2022", disc subfolders) and are redone on load for unread files.
     On the user's library: "Unknown artist" 3,524 → 193, "No year" 9,087 → 3,702.
@@ -357,6 +361,15 @@ beats within 15 ms.
   Progressive streaming would need a growing buffer as the media source.
 - The player's output doesn't follow a change of default output device yet.
 - Refresh token is plain text in the app data folder; move it to the OS keychain.
+- Online metadata lookup (user asked 2026-11-12): not built. Read tags were clean
+  (7 odd artists in 10,364, all real credits like "1991"; numeric titles real, e.g.
+  Sakamoto's *12*); the weird names were path guesses, now fixed. If it's wanted for
+  files whose tags are missing or junk: MusicBrainz text search (no key, 1 req/s,
+  User-Agent with the repo URL) for files with a usable title; AcoustID fingerprints
+  (pure-Rust chromaprint port, needs an app key, whole-file download) for the rest.
+  Either breaks the "only Dropbox" privacy claim on the site: make it opt-in.
+- ReplayGain is rare in the user's files (2.3% of 1,344 re-read). Leveling will do
+  little; measuring loudness during beat-map analysis would cover every played track.
 - Tags: files already read are being read again for the compilation flag and
   ReplayGain (`TAGS_VERSION` 2, after the unread ones). Run `library_probe` on the
   user's `library.json` once that's well along: if few files have ReplayGain, the
@@ -436,3 +449,7 @@ beats within 15 ms.
     after a second of silence. Added `Halt` (with threshold-flicker guard). A fade-out
     simulation of the demo showed reactions themselves decay smoothly, so the flicker
     at the presence threshold is the suspect; confirm with the user.
+  - User: weird numeric/title-like artists; asked about online lookup. They were path
+    guesses (disc-track numbers, numbered box-set folders, year-first folders): fixed,
+    25 → 2 (real). Tag reads 4 at a time so real tags replace guesses sooner. Online
+    lookup deferred (see Open items).
