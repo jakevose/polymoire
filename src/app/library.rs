@@ -3,7 +3,7 @@
 //! All network work runs on threads and reports back through one channel.
 
 use super::player::{Fetched, Player};
-use polymoire::library::catalog::{Catalog, Tags, View};
+use polymoire::library::catalog::{Catalog, Group, Tags, View};
 use polymoire::library::dropbox::{Dropbox, Entry, Pkce};
 use polymoire::library::media;
 use polymoire::library::scan::{self, Progress, Step};
@@ -37,6 +37,9 @@ enum Event {
     BackedUp(Result<(), String>),
 }
 
+type GroupsKey = (u64, View, String);
+type ListKey = (u64, View, Option<String>, String);
+
 pub struct Browse {
     pub path: String,
     pub folders: Option<Result<Vec<String>, String>>,
@@ -65,6 +68,11 @@ pub struct Library {
     pub browse: Option<Browse>,
     pub ui: UiState,
     pub syncing: bool,
+    /// Bumped on every catalog change; the browse views are cached against it (they
+    /// walk every track, too slow to redo each frame in a big library).
+    rev: u64,
+    groups_cache: Option<(GroupsKey, Arc<Vec<Group>>)>,
+    list_cache: Option<(ListKey, Arc<Vec<String>>)>,
     /// How far the current sync has got.
     pub scan: Option<Progress>,
     /// Numbers sync runs; events from an older one are ignored.
@@ -120,6 +128,9 @@ impl Library {
                 renaming: None,
             },
             syncing: false,
+            rev: 0,
+            groups_cache: None,
+            list_cache: None,
             scan: None,
             run: 0,
             cancel: Arc::new(AtomicBool::new(false)),
@@ -140,6 +151,7 @@ impl Library {
             } else {
                 Catalog::new(&root)
             };
+            lib.catalog.refresh_guesses();
         }
         if let (Some(key), Some(token)) =
             (lib.settings.app_key(), lib.settings.refresh_token.clone())
@@ -231,6 +243,7 @@ impl Library {
             self.restore_tried = false;
             self.player.stop();
             self.catalog = Catalog::new(path);
+            self.rev += 1;
             self.tried.clear();
             self.settings.root = Some(path.to_string());
             self.save_settings();
@@ -337,6 +350,7 @@ impl Library {
     }
 
     fn changed(&mut self) {
+        self.rev += 1;
         self.changed_at.get_or_insert_with(Instant::now);
         self.backup_due = true;
     }
@@ -462,6 +476,7 @@ impl Library {
             Event::Restored(run, c) if run == self.run => {
                 if let Some(c) = c.filter(|_| self.catalog.tracks.is_empty()) {
                     self.catalog = c;
+                    self.rev += 1;
                     self.status = "Restored the catalog from the library folder".into();
                 }
                 self.syncing = false;
@@ -518,6 +533,37 @@ impl Library {
     pub fn skip(&mut self, dir: i32) {
         if let Some(dbx) = self.dbx.clone() {
             self.player.skip(dir, &self.catalog, &dbx);
+        }
+    }
+
+    /// The current view's groups (cached).
+    pub fn groups(&mut self) -> Arc<Vec<Group>> {
+        let key = (self.rev, self.ui.view, self.ui.query.clone());
+        match &self.groups_cache {
+            Some((k, v)) if *k == key => v.clone(),
+            _ => {
+                let v = Arc::new(self.catalog.groups(key.1, &key.2));
+                self.groups_cache = Some((key, v.clone()));
+                v
+            }
+        }
+    }
+
+    /// The current view's tracks (cached).
+    pub fn tracks(&mut self) -> Arc<Vec<String>> {
+        let key = (
+            self.rev,
+            self.ui.view,
+            self.ui.group.clone(),
+            self.ui.query.clone(),
+        );
+        match &self.list_cache {
+            Some((k, v)) if *k == key => v.clone(),
+            _ => {
+                let v = Arc::new(self.catalog.list(key.1, key.2.as_deref(), &key.3));
+                self.list_cache = Some((key, v.clone()));
+                v
+            }
         }
     }
 

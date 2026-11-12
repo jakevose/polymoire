@@ -118,6 +118,7 @@ Last updated: 2026-11-11 (media player branch).
 | `src/library/` | `catalog` (model, views, playlists), `dropbox` (API, the one write), `scan` (resumable full scan, then changes only), `media` (Symphonia), `store` (app data files) |
 | `src/app/player.rs` | Queue, output stream that decodes + resamples in the callback, background fetch/analysis |
 | `src/app/library.rs` / `library_ui.rs` | Sign-in, folder choice, sync, tag crawl, cache + backup / library window, now-playing bar |
+| `examples/library_probe.rs` | Tag coverage and browse-view grouping of a saved catalog (the user's `library.json`) |
 | `examples/beatmap_probe.rs` | Beat-map local files; `--write-demo` + `--demo-grid` score encoded demo files |
 | `examples/pulse_probe.rs` | Measures kick accuracy and how well each visual signal pulses |
 | `examples/look_probe.rs` | Renders the scheduler's looks on the GPU and measures how often they're flat |
@@ -214,6 +215,18 @@ it to the shader. The flow clock `flow_t` advances by the Tempo trait plus
     collapsed, zigzag varints, base64url: ~1.2 chars/beat on the demo, a few bytes for a
     perfectly steady track. `StoredBeats.v` = `MAP_VERSION`; older maps are redone on
     next play. One tempo was the old weakness: 128→96 hit only 72% of beats.
+  - *Browsing names (`names.rs`):* artist credits split on feat./ft. always, and on
+    "/", ", ", " & ", " x " only when the first part is an artist in this library on
+    its own (keeps "Simon & Garfunkel", "AC/DC"). Albums without an album artist file
+    under the main credit, or "Various Artists" with the compilation flag. Genres split
+    on "/;," and merge by alphanumerics, minus a trailing "music", plus a few aliases
+    (DnB, R&B). Labels are each group's most common spelling. Views are cached in
+    `Library` against a revision bumped on every catalog change (16k tracks: 25 ms).
+  - *Path guesses* read release folder names ("Artist - Album (2018) [FLAC]", scene
+    "VA-Album-WEB-FLAC-2022", disc subfolders) and are redone on load for unread files.
+    On the user's library: "Unknown artist" 3,524 → 193, "No year" 9,087 → 3,702.
+  - *ReplayGain:* applied as gain + 6 dB, capped at 0 dB: loud masters come down to
+    meet quiet ones, nothing is boosted. Files without it play unchanged.
   - *Track change hold:* in player mode the picture freezes (like Pause) from a change
     of track until the new track is heard and the analyzer reports sound (user request). Tags crawl one file
     at a time from the first 256 KB (a second request if the ID3 block is bigger).
@@ -331,12 +344,10 @@ beats within 15 ms.
   Progressive streaming would need a growing buffer as the media source.
 - The player's output doesn't follow a change of default output device yet.
 - Refresh token is plain text in the app data folder; move it to the OS keychain.
-- Tags, from the user's library (16,422 mp3s, 9,105 tag-read so far): title, artist,
-  album, track 100% when read; album artist 75%, year 80%, genre 68% (163 genres with
-  near-duplicates: Hip-Hop / Rap/Hip Hop, World / World Music). 113 artists split
-  across collaboration credits ("Skrillex/Bladee", "feat."). Proposed: split artist
-  credits so a track lists under each artist, fold genre spellings, read the
-  compilation flag and ReplayGain. Waiting on the user.
+- Tags: files already read are being read again for the compilation flag and
+  ReplayGain (`TAGS_VERSION` 2, after the unread ones). Run `library_probe` on the
+  user's `library.json` once that's well along: if few files have ReplayGain, the
+  leveling does little, and the user might want it computed from the audio instead.
 - The website screenshots don't show the player yet (`mise run screenshots`).
 
 - Confirm with the user that the silence fix matches what they saw, and that the looks
@@ -403,3 +414,6 @@ beats within 15 ms.
   - Beat maps: tempo curve (Viterbi over windowed tempo) replaces one tempo per
     track; compact versioned storage. User request: freeze the picture between tracks
     until the new one is heard. Looked at tag quality in the user's library.
+  - Tags (user said continue): artist-credit splitting, genre merging, compilation
+    flag, ReplayGain leveling, release-folder path guesses, cached views,
+    `examples/library_probe.rs`.

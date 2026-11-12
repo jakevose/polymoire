@@ -2,6 +2,7 @@
 //! history, plus playlists. One serializable value, cached locally and backed up to the
 //! library folder (`store`, `dropbox`). Views slice it for the library browser.
 
+use super::names::{genres, Credits};
 use crate::beatmap::BeatMap;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -20,7 +21,16 @@ pub struct Tags {
     pub year: u16,
     pub track_no: u16,
     pub disc: u16,
+    /// Part of a compilation (iTunes' flag): file the album under "Various Artists".
+    pub compilation: bool,
+    /// ReplayGain track gain in dB, if the file has it.
+    pub gain: Option<f32>,
+    /// Which tag reader read these (`TAGS_VERSION`); older ones are read again.
+    pub v: u32,
 }
+
+/// Bump when the tag reader learns new fields, so files already read are read again.
+pub const TAGS_VERSION: u32 = 2;
 
 /// A file as the cloud lists it.
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -377,6 +387,15 @@ impl Catalog {
         self.tracks.len() != kept
     }
 
+    /// Guess again, from the path, the tags of files not read yet (after the guessing
+    /// improves). Called when a saved catalog loads.
+    pub fn refresh_guesses(&mut self) {
+        let root = self.root.clone();
+        for t in self.tracks.values_mut().filter(|t| !t.tagged) {
+            t.tags = guess_tags(&root, &t.path);
+        }
+    }
+
     pub fn set_tags(&mut self, id: &str, tags: Tags, duration: f32) {
         if let Some(t) = self.tracks.get_mut(id) {
             let guessed = std::mem::take(&mut t.tags);
@@ -401,49 +420,85 @@ impl Catalog {
         }
     }
 
-    /// Tracks still waiting for their tags, in browsing order.
+    /// Tracks still waiting for their tags: never read first, then read by an older
+    /// tag reader.
     pub fn untagged(&self) -> impl Iterator<Item = &Track> {
-        self.tracks.values().filter(|t| !t.tagged)
+        let stale = |t: &&Track| t.tagged && t.tags.v < TAGS_VERSION;
+        self.tracks
+            .values()
+            .filter(|t| !t.tagged)
+            .chain(self.tracks.values().filter(stale))
     }
 
-    fn group_key(&self, view: View, t: &Track) -> Option<(String, String)> {
-        Some(match view {
+    /// Artist credits split using this library's artists.
+    pub fn credits(&self) -> Credits {
+        Credits::new(
+            self.tracks
+                .values()
+                .flat_map(|t| [t.tags.artist.as_str(), t.tags.album_artist.as_str()]),
+        )
+    }
+
+    /// The groups a track belongs to in a view, as (key, label). Usually one; a
+    /// collaboration lists under each artist, "Rap/Hip Hop" under both genres.
+    fn group_keys(&self, view: View, t: &Track, credits: &Credits) -> Vec<(String, String)> {
+        let one = |label: String| vec![(label.to_lowercase(), label)];
+        match view {
             View::Artists => {
-                let a = t.album_artist();
-                (a.to_lowercase(), a.to_string())
+                let credit = nonempty(&t.tags.artist).unwrap_or(t.artist());
+                credits
+                    .split(credit)
+                    .into_iter()
+                    .map(|a| (a.to_lowercase(), a))
+                    .collect()
             }
             View::Albums => {
-                let label = format!("{} — {}", t.album(), t.album_artist());
-                (label.to_lowercase(), label)
+                let by = match nonempty(&t.tags.album_artist) {
+                    Some(a) => a.to_string(),
+                    None if t.tags.compilation => "Various Artists".into(),
+                    // Without an album artist, file the album under the main artist so
+                    // its collaborations don't split it.
+                    None => credits
+                        .split(t.artist())
+                        .into_iter()
+                        .next()
+                        .unwrap_or_default(),
+                };
+                one(format!("{} — {by}", t.album()))
             }
             View::Genres => {
-                let g = nonempty(&t.tags.genre).unwrap_or("No genre");
-                (g.to_lowercase(), g.to_string())
+                let g = genres(&t.tags.genre);
+                if g.is_empty() {
+                    vec![("~".into(), "No genre".into())]
+                } else {
+                    g
+                }
             }
             View::Years => match t.tags.year {
-                0 => ("~".into(), "No year".into()),
+                0 => vec![("~".into(), "No year".into())],
                 y => {
                     let d = y / 10 * 10;
                     // Newest first: invert the key.
-                    (format!("{:04}", 9999 - d), format!("{d}s"))
+                    vec![(format!("{:04}", 9999 - d), format!("{d}s"))]
                 }
             },
             View::Tempo => match t.bpm() {
-                None => ("~".into(), "Not analyzed yet".into()),
-                Some(bpm) => {
-                    let i = TEMPO_BANDS.iter().position(|(hi, _)| bpm < *hi)?;
-                    (i.to_string(), TEMPO_BANDS[i].1.to_string())
-                }
+                None => vec![("~".into(), "Not analyzed yet".into())],
+                Some(bpm) => TEMPO_BANDS
+                    .iter()
+                    .position(|(hi, _)| bpm < *hi)
+                    .map(|i| vec![(i.to_string(), TEMPO_BANDS[i].1.to_string())])
+                    .unwrap_or_default(),
             },
             View::Folders => {
                 let f = t.folder();
                 let rel = f.strip_prefix(self.root.as_str()).unwrap_or(f);
                 let rel = rel.trim_start_matches('/');
                 let label = if rel.is_empty() { "(top)" } else { rel };
-                (rel.to_lowercase(), label.to_string())
+                vec![(rel.to_lowercase(), label.to_string())]
             }
-            View::Playlists | View::Recent | View::MostPlayed | View::Songs => return None,
-        })
+            View::Playlists | View::Recent | View::MostPlayed | View::Songs => Vec::new(),
+        }
     }
 
     /// Groups for a view, filtered by a search. Playlists list in their own order.
@@ -462,19 +517,28 @@ impl Catalog {
                 .filter(|g| q.is_empty() || g.label.to_lowercase().contains(&q))
                 .collect();
         }
-        let mut map: BTreeMap<String, Group> = BTreeMap::new();
+        // Each group is labelled with its most common spelling.
+        let credits = self.credits();
+        let mut map: BTreeMap<String, (usize, BTreeMap<String, usize>)> = BTreeMap::new();
         for t in self.tracks.values().filter(|t| t.matches(&q)) {
-            if let Some((key, label)) = self.group_key(view, t) {
-                map.entry(key.clone())
-                    .or_insert(Group {
-                        key,
-                        label,
-                        count: 0,
-                    })
-                    .count += 1;
+            for (key, label) in self.group_keys(view, t, &credits) {
+                let g = map.entry(key).or_default();
+                g.0 += 1;
+                *g.1.entry(label).or_default() += 1;
             }
         }
-        map.into_values().collect()
+        map.into_iter()
+            .map(|(key, (count, labels))| Group {
+                label: labels
+                    .into_iter()
+                    // Ties go to the first spelling in sort order (capitals first).
+                    .max_by(|a, b| a.1.cmp(&b.1).then(b.0.cmp(&a.0)))
+                    .map(|(l, _)| l)
+                    .unwrap_or_default(),
+                key,
+                count,
+            })
+            .collect()
     }
 
     /// Track ids for a view (and group, for grouped views), in display order.
@@ -494,12 +558,16 @@ impl Catalog {
                 .cloned()
                 .collect();
         }
+        let credits = self.credits();
         let mut v: Vec<&Track> = self
             .tracks
             .values()
             .filter(|t| t.matches(&q))
             .filter(|t| match group {
-                Some(g) => self.group_key(view, t).is_some_and(|(k, _)| k == g),
+                Some(g) => self
+                    .group_keys(view, t, &credits)
+                    .iter()
+                    .any(|(k, _)| k == g),
                 None => !view.grouped(),
             })
             .collect();
@@ -580,14 +648,144 @@ pub fn guess_tags(root: &str, path: &str) -> Tags {
         tags.artist = a.trim().to_string();
         tags.title = t.trim().to_string();
     }
-    let n = parts.len();
-    if n >= 3 {
-        tags.artist = parts[n - 3].to_string();
-        tags.album = parts[n - 2].to_string();
-    } else if n == 2 {
-        tags.album = parts[0].to_string();
+    // The album folder: the nearest one above the file that isn't a disc folder.
+    let mut folders = &parts[..parts.len() - 1];
+    while let Some((last, rest)) = folders.split_last() {
+        match disc_number(last) {
+            Some(d) => {
+                if tags.disc == 0 {
+                    tags.disc = d;
+                }
+                folders = rest;
+            }
+            None => break,
+        }
+    }
+    let Some((dir, above)) = folders.split_last() else {
+        return tags;
+    };
+    let release = parse_release(dir);
+    tags.album = release.album;
+    tags.year = release.year;
+    match release.artist {
+        Some(a) if is_various(&a) => {
+            tags.compilation = true;
+            tags.album_artist = "Various Artists".into();
+        }
+        // A file named "Artist - Title" is more specific than its folder.
+        Some(a) if tags.artist.is_empty() => tags.artist = a,
+        Some(_) => {}
+        None => {
+            if let Some(parent) = above.last().filter(|_| tags.artist.is_empty()) {
+                tags.artist = parse_release(parent).album;
+            }
+        }
     }
     tags
+}
+
+fn is_various(a: &str) -> bool {
+    matches!(
+        a.to_lowercase().as_str(),
+        "va" | "v.a." | "various" | "various artists"
+    )
+}
+
+/// "CD1", "Disc 2", "CD 03" → the number.
+fn disc_number(dir: &str) -> Option<u16> {
+    let lower = dir.trim().to_lowercase();
+    let rest = ["disc", "disk", "cd"]
+        .iter()
+        .find_map(|p| lower.strip_prefix(p))?;
+    rest.trim_start_matches([' ', '_', '-', '.']).parse().ok()
+}
+
+struct Release {
+    artist: Option<String>,
+    album: String,
+    year: u16,
+}
+
+/// Words in release folder names that describe the copy, not the music.
+const FORMAT_WORDS: [&str; 14] = [
+    "flac", "mp3", "web", "cd", "vinyl", "320", "v0", "16-44", "24-96", "16-48", "24-48", "aac",
+    "lossless", "hi-res",
+];
+
+fn is_format(word: &str) -> bool {
+    let w = word.trim().to_lowercase();
+    !w.is_empty()
+        && w.split([' ', '-', '_'])
+            .filter(|p| !p.is_empty())
+            .all(|p| FORMAT_WORDS.contains(&p) || year_of(p).is_some() || p.contains("kbps"))
+}
+
+fn year_of(s: &str) -> Option<u16> {
+    let digits: String = s.chars().filter(|c| c.is_ascii_digit()).collect();
+    let y: u16 = digits.get(..4)?.parse().ok()?;
+    ((1900..=2100).contains(&y) && digits.len() == 4).then_some(y)
+}
+
+/// Read a release folder name: "Artist - Album (2018) [FLAC]",
+/// "[2007.08.02] Various Artists - Album [CD FLAC] {CAT-1}", or a scene name like
+/// "VA-Album-WEB-FLAC-2022". Bracketed notes go; a year in them is kept.
+fn parse_release(dir: &str) -> Release {
+    let mut year = 0;
+    let mut name = String::new();
+    let mut rest = dir;
+    // Remove bracketed groups, keeping (…) unless it's a year or format note.
+    while let Some(i) = rest.find(['[', '{', '(']) {
+        let close = match rest.as_bytes()[i] {
+            b'[' => ']',
+            b'{' => '}',
+            _ => ')',
+        };
+        let Some(j) = rest[i..].find(close).map(|j| i + j) else {
+            break;
+        };
+        let inner = &rest[i + 1..j];
+        if let Some(y) = inner.split([' ', '.', '-']).find_map(year_of) {
+            year = y;
+        }
+        name.push_str(&rest[..i]);
+        if close == ')' && !is_format(inner) && year_of(inner).is_none() {
+            name.push_str(&rest[i..=j]);
+        }
+        rest = &rest[j + 1..];
+    }
+    name.push_str(rest);
+    // Scene style: hyphens without spaces, format words at the end.
+    if !name.contains(" - ") && name.matches('-').count() >= 2 {
+        let parts: Vec<&str> = name.split('-').collect();
+        let keep = parts
+            .iter()
+            .rposition(|p| !is_format(p))
+            .map_or(0, |k| k + 1);
+        for p in &parts[keep..] {
+            if let Some(y) = year_of(p) {
+                year = y;
+            }
+        }
+        name = parts[..keep].join(" - ");
+    }
+    // Drop trailing " - WEB FLAC" style pieces.
+    let mut pieces: Vec<&str> = name.split(" - ").map(str::trim).collect();
+    while pieces.len() > 1 && pieces.last().is_some_and(|p| p.is_empty() || is_format(p)) {
+        pieces.pop();
+    }
+    let clean = |s: &str| s.trim().trim_matches(['-', ' ', '_']).to_string();
+    match pieces.as_slice() {
+        [artist, album @ ..] if !album.is_empty() => Release {
+            artist: Some(clean(artist)).filter(|a| !a.is_empty()),
+            album: clean(&album.join(" - ")),
+            year,
+        },
+        _ => Release {
+            artist: None,
+            album: clean(&pieces.join(" - ")),
+            year,
+        },
+    }
 }
 
 #[cfg(test)]
@@ -775,5 +973,101 @@ mod tests {
         assert_eq!(c.tracks.keys().collect::<Vec<_>>(), ["a", "b", "e"]);
         assert_eq!(c.tracks["a"].plays, 1);
         assert!(c.scan.gone.is_empty());
+    }
+
+    #[test]
+    fn collaborations_list_under_each_artist_and_keep_albums_whole() {
+        let mut c = Catalog::new("/M");
+        let tag = |c: &mut Catalog, id: &str, artist: &str, album: &str, genre: &str| {
+            c.add_listing(&[listed(id, &format!("/M/x/{id}.mp3"), id)]);
+            c.set_tags(
+                id,
+                Tags {
+                    title: id.into(),
+                    artist: artist.into(),
+                    album: album.into(),
+                    genre: genre.into(),
+                    ..Default::default()
+                },
+                1.0,
+            );
+        };
+        tag(&mut c, "a", "Skrillex", "Quest", "Electronic");
+        tag(&mut c, "b", "Skrillex/Bladee", "Quest", "electronic");
+        tag(&mut c, "c", "Simon & Garfunkel", "Bridge", "Rap/Hip Hop");
+        tag(&mut c, "d", "Bladee", "Other", "Hip-Hop");
+        let labels = |v: View| -> Vec<(String, usize)> {
+            c.groups(v, "")
+                .into_iter()
+                .map(|g| (g.label, g.count))
+                .collect()
+        };
+        assert_eq!(
+            labels(View::Artists),
+            [
+                ("Bladee".to_string(), 2),
+                ("Simon & Garfunkel".into(), 1),
+                ("Skrillex".into(), 2)
+            ]
+        );
+        // In album order: Other, then Quest.
+        assert_eq!(c.list(View::Artists, Some("bladee"), ""), ["d", "b"]);
+        let albums = labels(View::Albums);
+        assert!(
+            albums.contains(&("Quest — Skrillex".to_string(), 2)),
+            "{albums:?}"
+        );
+        assert_eq!(
+            labels(View::Genres),
+            [
+                ("Electronic".to_string(), 2),
+                ("Hip Hop".into(), 2),
+                ("Rap".into(), 1)
+            ]
+        );
+    }
+
+    #[test]
+    fn release_folder_names_give_artist_album_and_year() {
+        let g = |p: &str| {
+            let t = guess_tags("/M", p);
+            (t.artist, t.album, t.year, t.compilation, t.disc)
+        };
+        assert_eq!(
+            g("/M/David Bowie - Divine Symmetry [2022] - WEB FLAC/01 Changes.mp3"),
+            (
+                "David Bowie".into(),
+                "Divine Symmetry".into(),
+                2022,
+                false,
+                0
+            )
+        );
+        assert_eq!(
+            g("/M/Dimension - Fabriclive 98 (2018) [FLAC]/CD1/03 Desire.mp3"),
+            ("Dimension".into(), "Fabriclive 98".into(), 2018, false, 1)
+        );
+        assert_eq!(
+            g("/M/listenings/VA-DJ Hybrid presents Welcome To The Jungle-WEB-FLAC-2022/x.mp3").1,
+            "DJ Hybrid presents Welcome To The Jungle"
+        );
+        assert!(g("/M/listenings/VA - Tresor 30 (2021) [flac]/x.mp3").3);
+        assert_eq!(
+            g("/M/Lee Perry/King Scratch (Musical Masterpieces From The Upsetter Ark-Ive)/1 A.mp3"),
+            (
+                "Lee Perry".into(),
+                "King Scratch (Musical Masterpieces From The Upsetter Ark-Ive)".into(),
+                0,
+                false,
+                0
+            )
+        );
+        // A file named "Artist - Title" in a compilation keeps its own artist.
+        let t = guess_tags("/M", "/M/VA - Mix (2019)/02 Calibre - Even If.mp3");
+        assert_eq!(
+            (t.artist.as_str(), t.title.as_str()),
+            ("Calibre", "Even If")
+        );
+        assert_eq!(t.album_artist, "Various Artists");
     }
 }

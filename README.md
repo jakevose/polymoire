@@ -42,15 +42,23 @@ itself from your Dropbox.
 2. Pick the folder your music lives in. Polymoire lists every mp3 and m4a under it.
 3. Browse by artist, album, genre, decade, tempo, folder, playlist, recently added or
    most played, or search. Double-click to play; right-click a track for *Play next*,
-   *Add to queue* and playlists.
+   *Add to queue* and playlists. A collaboration ("Skrillex/Bladee", "A feat. B") is
+   listed under each artist, and genre spellings like *Hip-Hop* and *Hip Hop* are
+   merged. Until a file's tags are read, its artist, album and year are guessed from
+   folder names such as `Artist - Album (2018) [FLAC]`.
 
 How it behaves:
 
 - **Beat-mapped ahead of time.** Before a track plays (and while the one before it is
   playing), Polymoire downloads it and maps every beat in the whole track, so the
-  visuals land on the beat from the first bar, through breakdowns and syncopation. The
-  map is saved, so each track is analyzed once. Until it's ready, the live beat tracker
+  visuals land on the beat from the first bar, through breakdowns, syncopation and
+  tempo changes. The map is saved (about a byte per beat), so each track is analyzed
+  once. Until it's ready, the live beat tracker
   fills in.
+- **Even volume.** Tracks with ReplayGain tags are turned down to meet quieter ones
+  (never up, so nothing clips). Tracks without it play as they are.
+- **A still picture between songs.** When the track changes, the picture holds still
+  until the next one starts making sound.
 - **Gentle on your Dropbox.** The first scan of a big library shows how far it has got
   and roughly how long is left, and it can be interrupted: it picks up where it stopped,
   even on another computer. After that, syncing only fetches what changed. Tags are

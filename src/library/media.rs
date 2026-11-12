@@ -1,6 +1,6 @@
 //! Decoding mp3 and m4a (Symphonia): tags, streaming playback and whole-track analysis.
 
-use super::catalog::Tags;
+use super::catalog::{Tags, TAGS_VERSION};
 use crate::beatmap::{BeatMap, Tracker};
 use std::io::Cursor;
 use std::sync::Arc;
@@ -60,6 +60,8 @@ pub fn read_tags(bytes: Arc<Vec<u8>>, ext: &str) -> Result<(Tags, f32)> {
                 StandardTag::Genre(s) => tags.genre = s.to_string(),
                 StandardTag::TrackNumber(n) => tags.track_no = *n as u16,
                 StandardTag::DiscNumber(n) => tags.disc = *n as u16,
+                StandardTag::CompilationFlag(c) => tags.compilation = *c,
+                StandardTag::ReplayGainTrackGain(g) => tags.gain = parse_gain(g),
                 StandardTag::ReleaseYear(y) | StandardTag::RecordingYear(y) => tags.year = *y,
                 StandardTag::ReleaseDate(s) | StandardTag::RecordingDate(s) if tags.year == 0 => {
                     tags.year = s.get(..4).and_then(|y| y.parse().ok()).unwrap_or(0)
@@ -68,7 +70,19 @@ pub fn read_tags(bytes: Arc<Vec<u8>>, ext: &str) -> Result<(Tags, f32)> {
             }
         }
     }
+    tags.v = TAGS_VERSION;
     Ok((tags, duration(format.as_ref())))
+}
+
+/// "-7.32 dB" → -7.32.
+fn parse_gain(s: &str) -> Option<f32> {
+    let n = s
+        .trim()
+        .trim_end_matches(|c: char| c.is_alphabetic())
+        .trim();
+    n.parse()
+        .ok()
+        .filter(|g: &f32| g.is_finite() && g.abs() < 60.0)
 }
 
 fn duration(format: &dyn FormatReader) -> f32 {

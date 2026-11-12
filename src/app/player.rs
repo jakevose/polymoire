@@ -42,6 +42,8 @@ struct Deck {
     playing: bool,
     ended: bool,
     volume: f32,
+    /// This track's ReplayGain leveling, as a factor.
+    gain: f32,
     seek: Option<f64>,
     /// (track time at the end of the last block, when it was handed over, output latency).
     anchor: Option<(f64, Instant, f64)>,
@@ -84,7 +86,7 @@ impl Deck {
                 x + (y - x) * a
             };
             for (c, o) in frame.iter_mut().enumerate() {
-                *o = at(c.min(ch - 1)) * self.volume;
+                *o = at(c.min(ch - 1)) * self.volume * self.gain;
             }
             mono.push((0..ch).map(at).sum::<f32>() / ch as f32);
             self.frac += ratio;
@@ -131,6 +133,7 @@ impl Player {
                 playing: false,
                 ended: false,
                 volume,
+                gain: 1.0,
                 seek: None,
                 anchor: None,
             })),
@@ -319,11 +322,9 @@ impl Player {
     }
 
     fn open(&mut self, id: &str, bytes: Arc<Vec<u8>>, cat: &Catalog) {
-        let ext = cat
-            .tracks
-            .get(id)
-            .map(|t| t.ext().to_lowercase())
-            .unwrap_or_default();
+        let track = cat.tracks.get(id);
+        let ext = track.map(|t| t.ext().to_lowercase()).unwrap_or_default();
+        let gain = leveling(track.and_then(|t| t.tags.gain));
         match Decoder::new(bytes, &ext) {
             Ok(dec) => {
                 if let Err(e) = self.ensure_stream() {
@@ -332,6 +333,7 @@ impl Player {
                 }
                 let mut d = self.deck();
                 d.dec = Some(dec);
+                d.gain = gain;
                 d.src.clear();
                 d.frac = 0.0;
                 d.pos = 0.0;
@@ -450,4 +452,15 @@ impl Player {
         self.stream = Some(stream);
         Ok(())
     }
+}
+
+/// ReplayGain targets a quiet reference level, so its gains are mostly cuts of 6–10 dB
+/// for modern masters. With this head start, loud tracks come down to meet quiet ones,
+/// and nothing is ever boosted (no clipping). Tracks without ReplayGain play as they are.
+const LEVELING_HEADROOM_DB: f32 = 6.0;
+
+fn leveling(gain_db: Option<f32>) -> f32 {
+    gain_db.map_or(1.0, |g| {
+        10f32.powf((g + LEVELING_HEADROOM_DB) / 20.0).min(1.0)
+    })
 }

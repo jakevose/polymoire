@@ -283,7 +283,7 @@ fn groups(ui: &mut egui::Ui, lib: &mut Library, h: f32) {
             }
         });
     }
-    let list = lib.catalog.groups(lib.ui.view, &lib.ui.query);
+    let list = lib.groups();
     if list.is_empty() {
         ui.label(dim(if lib.ui.view == View::Playlists {
             "No playlists yet."
@@ -297,7 +297,7 @@ fn groups(ui: &mut egui::Ui, lib: &mut Library, h: f32) {
         .max_height(h)
         .auto_shrink(false)
         .show(ui, |ui| {
-            for g in list {
+            for g in list.iter() {
                 let selected = lib.ui.group.as_deref() == Some(&g.key);
                 if let Some((i, name)) = lib
                     .ui
@@ -378,7 +378,7 @@ fn tracks(ui: &mut egui::Ui, lib: &mut Library, h: f32) {
         ));
         return;
     }
-    let ids = lib.catalog.list(view, group.as_deref(), &lib.ui.query);
+    let ids = lib.tracks();
     if ids.is_empty() {
         ui.label(dim(match view {
             View::MostPlayed => "Nothing played yet.",
@@ -501,7 +501,7 @@ fn tracks(ui: &mut egui::Ui, lib: &mut Library, h: f32) {
     // Moves and removals index the playlist itself; they're only offered unfiltered.
     let unfiltered = lib.ui.query.is_empty();
     match act {
-        Some(TrackAction::Play(i)) => lib.play(ids, i),
+        Some(TrackAction::Play(i)) => lib.play(ids.to_vec(), i),
         Some(TrackAction::Next(id)) => lib.player.play_next(id),
         Some(TrackAction::Queue(id)) => lib.player.enqueue(id),
         Some(TrackAction::AddTo(k, id)) => lib.edit_playlists(|c| c.playlists[k].tracks.push(id)),
