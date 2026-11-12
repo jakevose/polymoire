@@ -115,7 +115,7 @@ Last updated: 2026-11-11 (media player branch).
 | `src/demo.rs` | 120 bpm house loop. **The only ground truth for the analysis tests** |
 | `src/app/` | Window, audio devices, HUD, frame loop (`mod.rs::step`) |
 | `src/beatmap.rs` | Offline whole-track beat mapping (onset bands → tempo → DP beats → refine) |
-| `src/library/` | `catalog` (model, views, playlists), `dropbox` (API, the one write), `media` (Symphonia), `store` (app data files) |
+| `src/library/` | `catalog` (model, views, playlists), `dropbox` (API, the one write), `scan` (whole-folder listing with progress), `media` (Symphonia), `store` (app data files) |
 | `src/app/player.rs` | Queue, output stream that decodes + resamples in the callback, background fetch/analysis |
 | `src/app/library.rs` / `library_ui.rs` | Sign-in, folder choice, sync, tag crawl, cache + backup / library window, now-playing bar |
 | `examples/beatmap_probe.rs` | Beat-map local files; `--write-demo` + `--demo-grid` score encoded demo files |
@@ -216,6 +216,13 @@ it to the shader. The flow clock `flow_t` advances by the Tempo trait plus
     change), backed up to `<root>/polymoire-library.json` every 10 min and on exit, and
     restored from there when a folder has no local cache. Track identity is the Dropbox
     file id (survives moves); a changed content hash drops tags and beat map.
+  - *Sync progress:* Dropbox can't say how big a folder is, and one recursive listing
+    gives no total. `scan.rs` walks the top levels (one cheap request per folder) until
+    it has 24+ folders or is 3 levels deep, then lists each recursively on 4 threads.
+    "Folders done of total" drives the bar; time left extrapolates from it once 3 are
+    done. Files merge into the catalog as each folder finishes (`add_listing`, no
+    removals); only the final full listing prunes. Retries rate limits and dropped
+    connections, not refusals. No backup upload mid-scan.
   - *Sign-in:* PKCE with a pasted code (no loopback server). Refresh token stored in
     plain text in `settings.json`.
 
@@ -288,8 +295,10 @@ error against the true grid):
 
 ## Open items
 
-- **Media player, untested pieces:** the whole Dropbox path (sign-in, listing, download,
-  Range reads, backup upload/restore) has never run. The player was checked offline
+- **Media player, untested pieces:** sign-in and folder listing work for the user;
+  the scan on a big library, downloads, Range reads and backup upload/restore haven't
+  been seen yet. Folder-count progress is uneven if one folder holds most of the
+  library (e.g. one giant "Compilations"). The player was checked offline
   (decode, resample, seek) but not through a sound card. Ask the user to try it.
 - Ask the user: are the browse views right (Artists, Albums, Genres, Years by decade,
   Tempo bands, Folders, Playlists, Recently added, Most played, Songs)? Album art, an
@@ -360,3 +369,6 @@ error against the true grid):
   - The real 400 was a missing app scope (`files.metadata.read`). "Use this folder" is
     now disabled until Dropbox has listed the folder (it had let a failed listing set
     the whole Dropbox as the library).
+  - User: sync sat on "Reading the library folder…" with no sense of progress. Added
+    `scan.rs`: folder-count progress bar, tracks found, time left, tracks appear as
+    folders finish, 4 parallel listings.

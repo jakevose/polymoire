@@ -212,7 +212,9 @@ fn browser(ui: &mut egui::Ui, lib: &mut Library, height: f32) {
             lib.ui.group = None;
         }
         let left = lib.untagged_left();
-        let info = if left > 0 {
+        let info = if let Some(p) = &lib.scan {
+            p.describe()
+        } else if left > 0 {
             format!(
                 "{} tracks · reading tags, {left} to go",
                 lib.catalog.tracks.len()
@@ -223,6 +225,17 @@ fn browser(ui: &mut egui::Ui, lib: &mut Library, height: f32) {
         ui.label(dim(info));
     });
     status_line(ui, lib);
+    if let Some(p) = &lib.scan {
+        // Indeterminate (animated) until the folder count is known.
+        let bar = egui::ProgressBar::new(if p.total > 0 {
+            p.done as f32 / p.total as f32
+        } else {
+            0.0
+        })
+        .desired_height(4.0)
+        .animate(p.total == 0);
+        ui.add(bar);
+    }
     ui.add_space(4.0);
 
     let col_h = height - 90.0;
@@ -374,7 +387,9 @@ fn tracks(ui: &mut egui::Ui, lib: &mut Library, h: f32) {
         ui.label(dim(match view {
             View::MostPlayed => "Nothing played yet.",
             View::Playlists => "Empty. Right-click any track to add it here.",
-            _ if lib.catalog.tracks.is_empty() && lib.syncing => "Reading the library folder…",
+            _ if lib.catalog.tracks.is_empty() && lib.syncing => {
+                "Reading the library folder. Tracks appear here as each folder is read."
+            }
             _ => "No tracks.",
         }));
         return;

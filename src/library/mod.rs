@@ -4,4 +4,5 @@
 pub mod catalog;
 pub mod dropbox;
 pub mod media;
+pub mod scan;
 pub mod store;

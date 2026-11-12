@@ -238,10 +238,26 @@ impl Catalog {
     /// lose their tags and beat map; play counts and playlists survive. Returns true if
     /// anything changed.
     pub fn merge_listing(&mut self, files: &[Listed]) -> bool {
+        let changed = self.add_listing(files);
+        let seen: std::collections::HashSet<&str> = files
+            .iter()
+            .filter(|f| Self::is_media(&f.path))
+            .map(|f| f.id.as_str())
+            .collect();
+        let kept = self.tracks.len();
+        self.tracks.retain(|id, _| seen.contains(id.as_str()));
+        let gone = self.tracks.len() != kept;
+        for p in &mut self.playlists {
+            p.tracks.retain(|id| seen.contains(id.as_str()));
+        }
+        changed || gone
+    }
+
+    /// Add or update the files in part of a listing, removing nothing (so tracks show up
+    /// while a big library is still being read). Returns true if anything changed.
+    pub fn add_listing(&mut self, files: &[Listed]) -> bool {
         let mut changed = false;
-        let mut seen = std::collections::HashSet::new();
         for f in files.iter().filter(|f| Self::is_media(&f.path)) {
-            seen.insert(f.id.clone());
             let t = self.tracks.entry(f.id.clone()).or_default();
             if t.hash != f.hash || t.path != f.path {
                 changed = true;
@@ -261,13 +277,7 @@ impl Catalog {
                 }
             }
         }
-        let kept = self.tracks.len();
-        self.tracks.retain(|id, _| seen.contains(id));
-        let gone = self.tracks.len() != kept;
-        for p in &mut self.playlists {
-            p.tracks.retain(|id| seen.contains(id));
-        }
-        changed || gone
+        changed
     }
 
     pub fn set_tags(&mut self, id: &str, tags: Tags, duration: f32) {

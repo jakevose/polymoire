@@ -6,10 +6,11 @@ use super::player::{Fetched, Player};
 use polymoire::library::catalog::{Catalog, Listed, Tags, View};
 use polymoire::library::dropbox::{Dropbox, Pkce};
 use polymoire::library::media;
+use polymoire::library::scan::{self, Progress};
 use polymoire::library::store::{self, Settings};
 use std::collections::HashSet;
 use std::sync::mpsc::{channel, Receiver, Sender};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime};
 
 /// Tags are read from the start of each file; most tag blocks fit in this.
@@ -26,6 +27,8 @@ enum Event {
     Account(Result<String, String>),
     Folders(String, Result<Vec<String>, String>),
     Restored(Option<Catalog>),
+    Scanning(Progress),
+    Found(Vec<Listed>),
     Listed(Result<Vec<Listed>, String>),
     Tagged(String, Result<(Tags, f32), String>),
     BackedUp(Result<(), String>),
@@ -59,6 +62,8 @@ pub struct Library {
     pub browse: Option<Browse>,
     pub ui: UiState,
     pub syncing: bool,
+    /// How far the current sync has got.
+    pub scan: Option<Progress>,
     tagging: bool,
     tried: HashSet<String>,
     changed_at: Option<Instant>,
@@ -108,6 +113,7 @@ impl Library {
                 renaming: None,
             },
             syncing: false,
+            scan: None,
             tagging: false,
             tried: HashSet::new(),
             changed_at: None,
@@ -228,22 +234,32 @@ impl Library {
             return;
         }
         self.syncing = true;
-        self.status = "Reading the library folder…".into();
-        if self.catalog.tracks.is_empty() {
-            let (d, r, tx) = (dbx.clone(), root.clone(), self.tx.clone());
-            std::thread::spawn(move || {
-                let restored = d
-                    .read_backup(&r)
+        self.scan = Some(Progress::default());
+        self.status.clear();
+        let restore = self.catalog.tracks.is_empty();
+        let tx = self.tx.clone();
+        std::thread::spawn(move || {
+            if restore {
+                let restored = dbx
+                    .read_backup(&root)
                     .ok()
                     .flatten()
                     .and_then(|b| serde_json::from_slice::<Catalog>(&b).ok())
-                    .filter(|c| c.root == r);
+                    .filter(|c| c.root == root);
                 let _ = tx.send(Event::Restored(restored));
-                let _ = tx.send(Event::Listed(d.files(&r)));
-            });
-        } else {
-            spawn(&self.tx, move || Event::Listed(dbx.files(&root)));
-        }
+            }
+            let tx = Mutex::new(tx);
+            let send = |e| {
+                let _ = tx.lock().unwrap_or_else(|p| p.into_inner()).send(e);
+            };
+            let res = scan::scan(
+                &dbx,
+                &root,
+                |p| send(Event::Scanning(p.clone())),
+                |files| send(Event::Found(files)),
+            );
+            send(Event::Listed(res));
+        });
     }
 
     fn changed(&mut self) {
@@ -314,7 +330,7 @@ impl Library {
                 self.status = format!("Couldn't save the catalog: {e}");
             }
         }
-        if self.backup_due && self.last_backup.elapsed() > BACKUP_EVERY {
+        if self.backup_due && !self.syncing && self.last_backup.elapsed() > BACKUP_EVERY {
             self.backup(false);
         }
     }
@@ -369,8 +385,15 @@ impl Library {
                 self.status = "Restored the catalog from the library folder".into();
             }
             Event::Restored(_) => {}
+            Event::Scanning(p) => self.scan = Some(p),
+            Event::Found(files) => {
+                if self.catalog.add_listing(&files) {
+                    self.changed();
+                }
+            }
             Event::Listed(res) => {
                 self.syncing = false;
+                self.scan = None;
                 match res {
                     Ok(files) => {
                         if self.catalog.merge_listing(&files) {

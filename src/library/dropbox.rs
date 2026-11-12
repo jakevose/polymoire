@@ -202,17 +202,18 @@ impl Dropbox {
         Ok(out)
     }
 
-    /// Every file under `root`, recursively.
-    pub fn files(&self, root: &str) -> Result<Vec<Listed>> {
-        Ok(self
-            .list(root, true)?
-            .into_iter()
-            .filter(|(folder, _)| !folder)
-            .map(|(_, e)| e)
-            .collect())
+    fn list(&self, path: &str, recursive: bool) -> Result<Vec<(bool, Listed)>> {
+        self.entries(path, recursive, |_| {})
     }
 
-    fn list(&self, path: &str, recursive: bool) -> Result<Vec<(bool, Listed)>> {
+    /// Files and folders (`true`) in a folder, calling `page` with each page's size as
+    /// it arrives (Dropbox sends up to 2000 entries per request).
+    pub fn entries(
+        &self,
+        path: &str,
+        recursive: bool,
+        mut page_done: impl FnMut(usize),
+    ) -> Result<Vec<(bool, Listed)>> {
         let mut out = Vec::new();
         let mut page = self.rpc(
             "files/list_folder",
@@ -235,6 +236,7 @@ impl Dropbox {
                     ));
                 }
             }
+            page_done(page["entries"].as_array().map_or(0, Vec::len));
             if page["has_more"] != true {
                 return Ok(out);
             }
