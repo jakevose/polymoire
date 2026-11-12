@@ -15,6 +15,53 @@ use std::time::{Duration, Instant};
 
 pub type Result<T> = std::result::Result<T, String>;
 
+/// One entry of a folder listing.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Entry {
+    Folder(String),
+    File(Listed),
+    /// Something at this path is gone (only in changes since a cursor).
+    Deleted(String),
+}
+
+/// One page of a folder listing. Pass `cursor` to `list_continue` for the next.
+#[derive(Clone, Debug, Default)]
+pub struct Page {
+    pub entries: Vec<Entry>,
+    pub cursor: String,
+    pub has_more: bool,
+}
+
+impl From<Value> for Page {
+    fn from(v: Value) -> Self {
+        let entries = v["entries"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|e| {
+                let s = |k: &str| e[k].as_str().unwrap_or_default().to_string();
+                match e[".tag"].as_str()? {
+                    "folder" => Some(Entry::Folder(s("path_display"))),
+                    "deleted" => Some(Entry::Deleted(s("path_display"))),
+                    "file" => Some(Entry::File(Listed {
+                        id: s("id"),
+                        path: s("path_display"),
+                        hash: s("content_hash"),
+                        size: e["size"].as_u64().unwrap_or(0),
+                        modified: s("server_modified"),
+                    })),
+                    _ => None,
+                }
+            })
+            .collect();
+        Page {
+            entries,
+            cursor: v["cursor"].as_str().unwrap_or_default().into(),
+            has_more: v["has_more"] == true,
+        }
+    }
+}
+
 pub const BACKUP_NAME: &str = "polymoire-library.json";
 const SCOPES: &str = "account_info.read files.metadata.read files.content.read files.content.write";
 const API: &str = "https://api.dropboxapi.com";
@@ -192,57 +239,46 @@ impl Dropbox {
 
     /// Subfolders of a folder ("" is the top of the Dropbox), sorted by name.
     pub fn folders(&self, path: &str) -> Result<Vec<String>> {
-        let mut out: Vec<String> = self
-            .list(path, false)?
-            .into_iter()
-            .filter(|(folder, _)| *folder)
-            .map(|(_, e)| e.path)
-            .collect();
+        let mut out = Vec::new();
+        let mut page = self.list_folder(path, false)?;
+        loop {
+            out.extend(page.entries.iter().filter_map(|e| match e {
+                Entry::Folder(p) => Some(p.clone()),
+                _ => None,
+            }));
+            if !page.has_more {
+                break;
+            }
+            page = self.list_continue(&page.cursor)?;
+        }
         out.sort_by_key(|p| p.to_lowercase());
         Ok(out)
     }
 
-    fn list(&self, path: &str, recursive: bool) -> Result<Vec<(bool, Listed)>> {
-        self.entries(path, recursive, |_| {})
-    }
-
-    /// Files and folders (`true`) in a folder, calling `page` with each page's size as
-    /// it arrives (Dropbox sends up to 2000 entries per request).
-    pub fn entries(
-        &self,
-        path: &str,
-        recursive: bool,
-        mut page_done: impl FnMut(usize),
-    ) -> Result<Vec<(bool, Listed)>> {
-        let mut out = Vec::new();
-        let mut page = self.rpc(
+    /// The first page of a folder listing (up to 2000 entries).
+    pub fn list_folder(&self, path: &str, recursive: bool) -> Result<Page> {
+        self.rpc(
             "files/list_folder",
             json!({ "path": path, "recursive": recursive, "limit": 2000 }),
+        )
+        .map(Page::from)
+    }
+
+    /// The next page after `cursor`: the rest of a listing, or (with a finished
+    /// listing's cursor) whatever has changed since.
+    pub fn list_continue(&self, cursor: &str) -> Result<Page> {
+        self.rpc("files/list_folder/continue", json!({ "cursor": cursor }))
+            .map(Page::from)
+    }
+
+    /// A cursor for a folder as it is now, without listing it: continuing from it later
+    /// gives only the changes since.
+    pub fn latest_cursor(&self, path: &str) -> Result<String> {
+        let v = self.rpc(
+            "files/list_folder/get_latest_cursor",
+            json!({ "path": path, "recursive": true }),
         )?;
-        loop {
-            for e in page["entries"].as_array().into_iter().flatten() {
-                let s = |k: &str| e[k].as_str().unwrap_or_default().to_string();
-                let folder = e[".tag"] == "folder";
-                if folder || e[".tag"] == "file" {
-                    out.push((
-                        folder,
-                        Listed {
-                            id: s("id"),
-                            path: s("path_display"),
-                            hash: s("content_hash"),
-                            size: e["size"].as_u64().unwrap_or(0),
-                            modified: s("server_modified"),
-                        },
-                    ));
-                }
-            }
-            page_done(page["entries"].as_array().map_or(0, Vec::len));
-            if page["has_more"] != true {
-                return Ok(out);
-            }
-            let cursor = page["cursor"].clone();
-            page = self.rpc("files/list_folder/continue", json!({ "cursor": cursor }))?;
-        }
+        Ok(v["cursor"].as_str().unwrap_or_default().into())
     }
 
     /// A file's bytes, by id or path. `first` limits it to the first that many bytes
@@ -367,6 +403,7 @@ mod tests {
             "",
             "list_folder",
             "list_folder/continue",
+            "list_folder/get_latest_cursor",
             "download",
             "upload",
         ];

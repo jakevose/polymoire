@@ -92,6 +92,8 @@ pub struct Track {
     pub plays: u32,
     /// Unix seconds.
     pub last_played: u64,
+    /// The full scan that last listed this file (`ScanState::pass`).
+    pub seen: u32,
 }
 
 impl Track {
@@ -155,6 +157,65 @@ pub struct Catalog {
     pub root: String,
     pub tracks: BTreeMap<String, Track>,
     pub playlists: Vec<Playlist>,
+    pub scan: ScanState,
+}
+
+/// How far reading the library folder has got. Saved with the catalog (and so in the
+/// Dropbox backup), so an interrupted scan picks up where it stopped.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ScanState {
+    /// Changes after this cursor are what the next sync fetches. Taken just before the
+    /// full scan starts, so nothing that changes during the scan is missed.
+    pub cursor: Option<String>,
+    /// The full scan has finished; syncs now fetch only what changed.
+    pub complete: bool,
+    /// Levels walked before folders are listed whole. Kept so a resumed scan splits
+    /// the library into the same folders.
+    pub depth: Option<usize>,
+    /// The folders the full scan lists whole, and how far each has got.
+    pub folders: BTreeMap<String, FolderScan>,
+    /// Numbers full scans. Files listed in this one carry it; at the end, tracks that
+    /// don't are gone.
+    pub pass: u32,
+    /// Tracks deleted by the changes fetched so far, kept until the sync finishes: a
+    /// moved file arrives as a delete and an add (same id), maybe pages apart, and should
+    /// keep its tags, beat map and plays.
+    pub gone: BTreeMap<String, Track>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct FolderScan {
+    /// Where to continue the listing from (`None`: not started).
+    pub cursor: Option<String>,
+    pub done: bool,
+}
+
+impl ScanState {
+    /// Start over with a new full scan (keeping the pass count).
+    pub fn restart(&mut self) {
+        *self = ScanState {
+            pass: self.pass,
+            ..Default::default()
+        };
+    }
+
+    /// Match the saved folders to what the walk found now: folders that went away are
+    /// dropped, new ones start fresh. Returns the folders still to list, with where to
+    /// continue each from.
+    pub fn plan(&mut self, depth: usize, folders: &[String]) -> Vec<(String, Option<String>)> {
+        self.depth = Some(depth);
+        self.folders.retain(|f, _| folders.contains(f));
+        let mut todo = Vec::new();
+        for f in folders {
+            let s = self.folders.entry(f.clone()).or_default();
+            if !s.done {
+                todo.push((f.clone(), s.cursor.clone()));
+            }
+        }
+        todo
+    }
 }
 
 /// Ways to browse. Grouped views list groups, then the tracks in the chosen group.
@@ -238,27 +299,23 @@ impl Catalog {
     /// lose their tags and beat map; play counts and playlists survive. Returns true if
     /// anything changed.
     pub fn merge_listing(&mut self, files: &[Listed]) -> bool {
+        self.scan.pass += 1;
         let changed = self.add_listing(files);
-        let seen: std::collections::HashSet<&str> = files
-            .iter()
-            .filter(|f| Self::is_media(&f.path))
-            .map(|f| f.id.as_str())
-            .collect();
-        let kept = self.tracks.len();
-        self.tracks.retain(|id, _| seen.contains(id.as_str()));
-        let gone = self.tracks.len() != kept;
-        for p in &mut self.playlists {
-            p.tracks.retain(|id| seen.contains(id.as_str()));
-        }
-        changed || gone
+        changed | self.finish_full_scan()
     }
 
-    /// Add or update the files in part of a listing, removing nothing (so tracks show up
-    /// while a big library is still being read). Returns true if anything changed.
+    /// Add or update files from a listing, removing nothing (tracks show up while a big
+    /// library is still being read). They're marked as seen in the current full scan.
+    /// Returns true if anything changed.
     pub fn add_listing(&mut self, files: &[Listed]) -> bool {
         let mut changed = false;
+        let pass = self.scan.pass;
         for f in files.iter().filter(|f| Self::is_media(&f.path)) {
+            if let Some(t) = self.scan.gone.remove(&f.id) {
+                self.tracks.entry(f.id.clone()).or_insert(t);
+            }
             let t = self.tracks.entry(f.id.clone()).or_default();
+            t.seen = pass;
             if t.hash != f.hash || t.path != f.path {
                 changed = true;
                 if t.hash != f.hash {
@@ -278,6 +335,55 @@ impl Catalog {
             }
         }
         changed
+    }
+
+    /// The full scan listed everything: tracks it didn't see are gone. From now on syncs
+    /// fetch only changes. Returns true if anything was removed.
+    pub fn finish_full_scan(&mut self) -> bool {
+        let pass = self.scan.pass;
+        self.scan.complete = true;
+        self.scan.folders.clear();
+        self.remove(|t| t.seen != pass)
+    }
+
+    /// Something at `path` was deleted (a file, or a folder and all inside it).
+    pub fn delete_path(&mut self, path: &str) {
+        let p = path.to_lowercase();
+        let ids: Vec<String> = self
+            .tracks
+            .values()
+            .filter(|t| {
+                let tp = t.path.to_lowercase();
+                tp == p
+                    || tp
+                        .strip_prefix(p.as_str())
+                        .is_some_and(|r| r.starts_with('/'))
+            })
+            .map(|t| t.id.clone())
+            .collect();
+        for id in ids {
+            if let Some(t) = self.tracks.remove(&id) {
+                self.scan.gone.insert(id, t);
+            }
+        }
+    }
+
+    /// A sync's changes are all in: deleted tracks that didn't reappear are gone for
+    /// good. Returns true if any were.
+    pub fn finish_changes(&mut self) -> bool {
+        let any = !std::mem::take(&mut self.scan.gone).is_empty();
+        self.remove(|_| false);
+        any
+    }
+
+    fn remove(&mut self, gone: impl Fn(&Track) -> bool) -> bool {
+        let kept = self.tracks.len();
+        self.tracks.retain(|_, t| !gone(t));
+        let tracks = &self.tracks;
+        for p in &mut self.playlists {
+            p.tracks.retain(|id| tracks.contains_key(id));
+        }
+        self.tracks.len() != kept
     }
 
     pub fn set_tags(&mut self, id: &str, tags: Tags, duration: f32) {
@@ -617,5 +723,63 @@ mod tests {
         for (a, b) in back.beats.iter().zip(&m.beats) {
             assert!((a - b).abs() < 0.001);
         }
+    }
+
+    #[test]
+    fn resumed_scan_lists_only_unfinished_folders() {
+        let mut st = ScanState::default();
+        let all = ["/M/A".to_string(), "/M/B".into(), "/M/C".into()];
+        assert_eq!(st.plan(1, &all).len(), 3);
+        st.folders.get_mut("/M/A").unwrap().done = true;
+        st.folders.get_mut("/M/B").unwrap().cursor = Some("half".into());
+        // Interrupted. Since then /M/C was deleted and /M/D added.
+        let now = ["/M/A".to_string(), "/M/B".into(), "/M/D".into()];
+        let todo = st.plan(1, &now);
+        assert_eq!(
+            todo,
+            vec![
+                ("/M/B".to_string(), Some("half".to_string())),
+                ("/M/D".into(), None)
+            ]
+        );
+        assert!(!st.folders.contains_key("/M/C"));
+    }
+
+    #[test]
+    fn full_scan_removes_unseen_tracks_only_at_the_end() {
+        let mut c = sample();
+        c.new_playlist("p");
+        c.playlists[0].tracks = vec!["a".into(), "c".into()];
+        c.scan.restart();
+        c.scan.pass += 1;
+        // A resumed scan sees the files in two batches; "c" is gone.
+        c.add_listing(&[listed("a", "/Music/Bonobo/Migration/01 Migration.mp3", "1")]);
+        assert_eq!(c.tracks.len(), 3, "nothing removed mid-scan");
+        c.add_listing(&[listed(
+            "b",
+            "/Music/Bonobo/Migration/02 Break Apart.m4a",
+            "2",
+        )]);
+        assert!(c.finish_full_scan());
+        assert!(c.scan.complete);
+        assert_eq!(c.tracks.keys().collect::<Vec<_>>(), ["a", "b"]);
+        assert_eq!(c.playlists[0].tracks, ["a"]);
+    }
+
+    #[test]
+    fn changes_apply_in_order_and_moves_keep_history() {
+        let mut c = sample();
+        c.played("a", 5);
+        // "a" moved; the Loose folder was deleted, then a new file appeared there.
+        c.delete_path("/music/bonobo/migration/01 migration.mp3");
+        c.delete_path("/Music/Loose");
+        c.add_listing(&[
+            listed("a", "/Music/Best/01 Migration.mp3", "1"),
+            listed("e", "/Music/Loose/New.mp3", "5"),
+        ]);
+        assert!(c.finish_changes());
+        assert_eq!(c.tracks.keys().collect::<Vec<_>>(), ["a", "b", "e"]);
+        assert_eq!(c.tracks["a"].plays, 1);
+        assert!(c.scan.gone.is_empty());
     }
 }

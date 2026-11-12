@@ -213,7 +213,7 @@ fn browser(ui: &mut egui::Ui, lib: &mut Library, height: f32) {
         }
         let left = lib.untagged_left();
         let info = if let Some(p) = &lib.scan {
-            p.describe()
+            p.describe(lib.catalog.tracks.len())
         } else if left > 0 {
             format!(
                 "{} tracks · reading tags, {left} to go",
@@ -227,13 +227,9 @@ fn browser(ui: &mut egui::Ui, lib: &mut Library, height: f32) {
     status_line(ui, lib);
     if let Some(p) = &lib.scan {
         // Indeterminate (animated) until the folder count is known.
-        let bar = egui::ProgressBar::new(if p.total > 0 {
-            p.done as f32 / p.total as f32
-        } else {
-            0.0
-        })
-        .desired_height(4.0)
-        .animate(p.total == 0);
+        let bar = egui::ProgressBar::new(p.fraction().unwrap_or(0.0))
+            .desired_height(4.0)
+            .animate(p.fraction().is_none());
         ui.add(bar);
     }
     ui.add_space(4.0);

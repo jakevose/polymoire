@@ -51,12 +51,16 @@ How it behaves:
   visuals land on the beat from the first bar, through breakdowns and syncopation. The
   map is saved, so each track is analyzed once. Until it's ready, the live beat tracker
   fills in.
-- **Gentle on your Dropbox.** Tags are read one file at a time from the start of each
-  file, and everything is cached on your computer, so reopening the app doesn't
-  download your library again.
+- **Gentle on your Dropbox.** The first scan of a big library shows how far it has got
+  and roughly how long is left, and it can be interrupted: it picks up where it stopped,
+  even on another computer. After that, syncing only fetches what changed. Tags are
+  read one file at a time from the start of each file, and everything is cached on
+  your computer, so reopening the app doesn't download your library again.
 - **One write, ever.** Polymoire reads your music and writes exactly one file to Dropbox:
   `polymoire-library.json` in your music folder, a backup of its catalog (tags, beat
-  maps, play counts, playlists). On another computer, it picks up from that backup.
+  maps, play counts, playlists, scan progress). It's updated every couple of minutes
+  during a scan and every 10 minutes otherwise. On another computer, it picks up from
+  that backup.
 - **Dropbox app key.** Dropbox needs an app key to sign in. Builds made with
   `POLYMOIRE_DROPBOX_KEY` set include one; otherwise the app asks for yours. To make one,
   create an app at dropbox.com/developers with *Full Dropbox* access, allow public

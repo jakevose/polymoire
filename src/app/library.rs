@@ -3,12 +3,13 @@
 //! All network work runs on threads and reports back through one channel.
 
 use super::player::{Fetched, Player};
-use polymoire::library::catalog::{Catalog, Listed, Tags, View};
-use polymoire::library::dropbox::{Dropbox, Pkce};
+use polymoire::library::catalog::{Catalog, Tags, View};
+use polymoire::library::dropbox::{Dropbox, Entry, Pkce};
 use polymoire::library::media;
-use polymoire::library::scan::{self, Progress};
+use polymoire::library::scan::{self, Progress, Step};
 use polymoire::library::store::{self, Settings};
 use std::collections::HashSet;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime};
@@ -19,17 +20,19 @@ const TAG_BYTES: u64 = 256 * 1024;
 const MAX_TAG_BYTES: u64 = 4 << 20;
 /// Save the local cache this long after a change.
 const SAVE_AFTER: Duration = Duration::from_secs(5);
-/// Back up to Dropbox at most this often (and when the app closes).
+/// Back up to Dropbox at most this often (and when the app closes)...
 const BACKUP_EVERY: Duration = Duration::from_secs(600);
+/// ...or this often while a scan runs, so an interrupted scan loses little.
+const CHECKPOINT_EVERY: Duration = Duration::from_secs(120);
 
 enum Event {
     Connected(Result<String, String>),
     Account(Result<String, String>),
     Folders(String, Result<Vec<String>, String>),
-    Restored(Option<Catalog>),
-    Scanning(Progress),
-    Found(Vec<Listed>),
-    Listed(Result<Vec<Listed>, String>),
+    Restored(u64, Option<Catalog>),
+    /// A sync run's findings, tagged with the run so a cancelled one is ignored.
+    Scan(u64, Step),
+    Synced(u64, Result<(), String>),
     Tagged(String, Result<(Tags, f32), String>),
     BackedUp(Result<(), String>),
 }
@@ -64,6 +67,10 @@ pub struct Library {
     pub syncing: bool,
     /// How far the current sync has got.
     pub scan: Option<Progress>,
+    /// Numbers sync runs; events from an older one are ignored.
+    run: u64,
+    cancel: Arc<AtomicBool>,
+    restore_tried: bool,
     tagging: bool,
     tried: HashSet<String>,
     changed_at: Option<Instant>,
@@ -114,6 +121,9 @@ impl Library {
             },
             syncing: false,
             scan: None,
+            run: 0,
+            cancel: Arc::new(AtomicBool::new(false)),
+            restore_tried: false,
             tagging: false,
             tried: HashSet::new(),
             changed_at: None,
@@ -190,6 +200,7 @@ impl Library {
     }
 
     pub fn disconnect(&mut self) {
+        self.stop_sync();
         self.player.stop();
         self.dbx = None;
         self.account = None;
@@ -216,6 +227,8 @@ impl Library {
     pub fn choose_root(&mut self, path: &str) {
         self.browse = None;
         if self.settings.root.as_deref() != Some(path) {
+            self.stop_sync();
+            self.restore_tried = false;
             self.player.stop();
             self.catalog = Catalog::new(path);
             self.tried.clear();
@@ -225,7 +238,8 @@ impl Library {
         self.sync();
     }
 
-    /// List the library folder (restoring the Dropbox backup first if there's no cache).
+    /// Bring the catalog up to date: restore the Dropbox backup first if there's no
+    /// local cache, then resume or start a full scan, or fetch the changes since the last.
     pub fn sync(&mut self) {
         let (Some(dbx), Some(root)) = (self.dbx.clone(), self.settings.root.clone()) else {
             return;
@@ -236,30 +250,90 @@ impl Library {
         self.syncing = true;
         self.scan = Some(Progress::default());
         self.status.clear();
-        let restore = self.catalog.tracks.is_empty();
-        let tx = self.tx.clone();
-        std::thread::spawn(move || {
-            if restore {
+        self.run += 1;
+        self.cancel = Arc::new(AtomicBool::new(false));
+        let (run, tx) = (self.run, self.tx.clone());
+        if self.catalog.tracks.is_empty() && !self.restore_tried {
+            self.restore_tried = true;
+            std::thread::spawn(move || {
                 let restored = dbx
                     .read_backup(&root)
                     .ok()
                     .flatten()
                     .and_then(|b| serde_json::from_slice::<Catalog>(&b).ok())
                     .filter(|c| c.root == root);
-                let _ = tx.send(Event::Restored(restored));
-            }
+                let _ = tx.send(Event::Restored(run, restored));
+            });
+            return;
+        }
+        let (state, cancel) = (self.catalog.scan.clone(), self.cancel.clone());
+        std::thread::spawn(move || {
             let tx = Mutex::new(tx);
             let send = |e| {
                 let _ = tx.lock().unwrap_or_else(|p| p.into_inner()).send(e);
             };
-            let res = scan::scan(
-                &dbx,
-                &root,
-                |p| send(Event::Scanning(p.clone())),
-                |files| send(Event::Found(files)),
-            );
-            send(Event::Listed(res));
+            let res = scan::sync(&dbx, &root, state, &cancel, |step| {
+                send(Event::Scan(run, step))
+            });
+            send(Event::Synced(run, res));
         });
+    }
+
+    /// Stop a running sync; what it found so far stays in the catalog.
+    fn stop_sync(&mut self) {
+        self.cancel.store(true, Ordering::Relaxed);
+        self.run += 1;
+        self.syncing = false;
+        self.scan = None;
+    }
+
+    /// Record one finding. The scan state moves with the files, so every save of the
+    /// catalog is a checkpoint a later sync can resume from.
+    fn scan_step(&mut self, step: Step) {
+        let scan = &mut self.catalog.scan;
+        match step {
+            Step::Progress(p) => {
+                self.scan = Some(p);
+                return;
+            }
+            Step::Reset => scan.restart(),
+            Step::Started(cursor) => {
+                scan.pass += 1;
+                scan.cursor = Some(cursor);
+            }
+            Step::Walked {
+                depth,
+                files,
+                folders,
+            } => {
+                scan.plan(depth, &folders);
+                self.catalog.add_listing(&files);
+            }
+            Step::Page {
+                folder,
+                files,
+                cursor,
+                done,
+            } => {
+                let f = scan.folders.entry(folder).or_default();
+                f.cursor = Some(cursor);
+                f.done = done;
+                self.catalog.add_listing(&files);
+            }
+            Step::Changes { entries, cursor } => {
+                scan.cursor = Some(cursor);
+                for e in entries {
+                    match e {
+                        Entry::File(f) => {
+                            self.catalog.add_listing(&[f]);
+                        }
+                        Entry::Deleted(p) => self.catalog.delete_path(&p),
+                        Entry::Folder(_) => {}
+                    }
+                }
+            }
+        }
+        self.changed();
     }
 
     fn changed(&mut self) {
@@ -330,7 +404,12 @@ impl Library {
                 self.status = format!("Couldn't save the catalog: {e}");
             }
         }
-        if self.backup_due && !self.syncing && self.last_backup.elapsed() > BACKUP_EVERY {
+        let every = if self.syncing {
+            CHECKPOINT_EVERY
+        } else {
+            BACKUP_EVERY
+        };
+        if self.backup_due && self.last_backup.elapsed() > every {
             self.backup(false);
         }
     }
@@ -380,30 +459,36 @@ impl Library {
                     b.folders = Some(res);
                 }
             }
-            Event::Restored(Some(c)) if self.catalog.tracks.is_empty() => {
-                self.catalog = c;
-                self.status = "Restored the catalog from the library folder".into();
-            }
-            Event::Restored(_) => {}
-            Event::Scanning(p) => self.scan = Some(p),
-            Event::Found(files) => {
-                if self.catalog.add_listing(&files) {
-                    self.changed();
+            Event::Restored(run, c) if run == self.run => {
+                if let Some(c) = c.filter(|_| self.catalog.tracks.is_empty()) {
+                    self.catalog = c;
+                    self.status = "Restored the catalog from the library folder".into();
                 }
+                self.syncing = false;
+                self.sync();
             }
-            Event::Listed(res) => {
+            Event::Scan(run, step) if run == self.run => self.scan_step(step),
+            Event::Synced(run, res) if run == self.run => {
                 self.syncing = false;
                 self.scan = None;
                 match res {
-                    Ok(files) => {
-                        if self.catalog.merge_listing(&files) {
-                            self.changed();
+                    Ok(()) => {
+                        let full = !self.catalog.scan.complete;
+                        if full {
+                            self.catalog.finish_full_scan();
+                        } else {
+                            self.catalog.finish_changes();
                         }
+                        self.changed();
                         self.status = format!("{} tracks", self.catalog.tracks.len());
+                        if full {
+                            self.backup(false);
+                        }
                     }
-                    Err(e) => self.status = e,
+                    Err(e) => self.status = format!("{e}. Sync again to pick up where it stopped."),
                 }
             }
+            Event::Restored(..) | Event::Scan(..) | Event::Synced(..) => {}
             Event::Tagged(id, res) => {
                 self.tagging = false;
                 if let Ok((tags, secs)) = res {
