@@ -29,17 +29,45 @@ fn agent() -> &'static ureq::Agent {
         ureq::Agent::config_builder()
             .timeout_connect(Some(Duration::from_secs(15)))
             .timeout_per_read(Some(Duration::from_secs(30)))
+            // Error statuses come back as responses, so Dropbox's explanation can be read.
+            .http_status_as_error(false)
             .build()
             .new_agent()
     })
 }
 
 fn err(e: impl std::fmt::Display) -> String {
-    let s = e.to_string();
-    match s.as_str() {
-        s if s.contains("401") => "Dropbox sign-in expired. Connect again.".into(),
-        s if s.contains("409") => "Not found in Dropbox".into(),
-        _ => format!("Dropbox: {s}"),
+    format!("Dropbox: {e}")
+}
+
+/// Turns an error status into a readable message, using Dropbox's own explanation
+/// (`error_summary` from the API, `error_description` from sign-in, else the body text).
+trait Checked {
+    fn checked(self) -> Result<ureq::http::Response<ureq::Body>>;
+}
+
+impl Checked for std::result::Result<ureq::http::Response<ureq::Body>, ureq::Error> {
+    fn checked(self) -> Result<ureq::http::Response<ureq::Body>> {
+        let mut r = self.map_err(err)?;
+        let status = r.status().as_u16();
+        if status < 400 {
+            return Ok(r);
+        }
+        let text = r.body_mut().read_to_string().unwrap_or_default();
+        let why = serde_json::from_str::<Value>(&text)
+            .ok()
+            .and_then(|v| {
+                v["error_summary"]
+                    .as_str()
+                    .or(v["error_description"].as_str())
+                    .map(str::to_string)
+            })
+            .unwrap_or(text);
+        Err(match status {
+            401 => format!("Dropbox sign-in expired or lacks permission ({why}). Connect again."),
+            409 if why.contains("not_found") => "Not found in Dropbox".into(),
+            _ => format!("Dropbox error {status}: {}", why.trim()),
+        })
     }
 }
 
@@ -80,7 +108,7 @@ impl Pkce {
                 ("code_verifier", &self.verifier),
                 ("client_id", app_key),
             ])
-            .map_err(err)?
+            .checked()?
             .body_mut()
             .read_json()
             .map_err(err)?;
@@ -125,7 +153,7 @@ impl Dropbox {
                 ("refresh_token", &self.refresh),
                 ("client_id", &self.app_key),
             ])
-            .map_err(err)?
+            .checked()?
             .body_mut()
             .read_json()
             .map_err(err)?;
@@ -138,8 +166,9 @@ impl Dropbox {
         agent()
             .post(format!("{API}/2/{endpoint}"))
             .header("Authorization", format!("Bearer {}", self.token()?))
-            .send_json(body)
-            .map_err(err)?
+            .content_type("application/json")
+            .send(body.to_string())
+            .checked()?
             .body_mut()
             .read_json()
             .map_err(err)
@@ -151,7 +180,7 @@ impl Dropbox {
             .post(format!("{API}/2/users/get_current_account"))
             .header("Authorization", format!("Bearer {}", self.token()?))
             .send_empty()
-            .map_err(err)?
+            .checked()?
             .body_mut()
             .read_json::<Value>()
             .map_err(err)?;
@@ -225,7 +254,7 @@ impl Dropbox {
             req = req.header("Range", format!("bytes=0-{}", n.saturating_sub(1)));
         }
         req.send_empty()
-            .map_err(err)?
+            .checked()?
             .body_mut()
             .with_config()
             .limit(MAX_FILE)
@@ -251,7 +280,7 @@ impl Dropbox {
             .header("Dropbox-API-Arg", api_arg(&arg))
             .header("Content-Type", "application/octet-stream")
             .send(bytes)
-            .map_err(err)?;
+            .checked()?;
         Ok(())
     }
 }

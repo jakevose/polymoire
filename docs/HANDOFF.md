@@ -40,9 +40,11 @@ Last updated: 2026-11-11 (media player branch).
 - **Media player (branch `media-player`, not merged).** The user asked for the
   "counterintuitive direction": a Dropbox mp3/m4a player *inside* the visualizer, with a
   catalog, playlists and beat maps made ahead of playback. They want a "low golf score"
-  first pass they'll refine, kept modular. Built end to end; **never run against a real
-  Dropbox account** (no app key here). First thing to do: register a Dropbox app (README,
-  Media player), sign in, and fix what breaks.
+  first pass they'll refine, kept modular. The user has signed in to a real Dropbox
+  account; the folder listing then failed with a bare "http status: 400". Fixed blind
+  (no account here): JSON calls now send exactly `application/json` (ureq adds
+  `; charset=utf-8`), and every error shows Dropbox's own explanation. **Ask whether
+  the folder list works now; if not, the new message says why.**
 - **Trait changes** now go through a shuffle bag (every trait changes once per round,
   never twice in a row). The user asked about "effects"; this assumes they meant the
   trait rows, not the options within the Effect trait. Not confirmed.
@@ -350,3 +352,5 @@ error against the true grid):
   - Media player on branch `media-player`: Dropbox (PKCE, read plus one backup write),
     Symphonia decoding, catalog with ten views, playlists, offline beat maps (demo
     encoded to mp3: 1.7 ms median), system-audio/player toggle. Not run against Dropbox.
+  - User test: sign-in works; listing folders failed with HTTP 400. Sent the exact JSON
+    content type and surfaced Dropbox's error text for every call.
