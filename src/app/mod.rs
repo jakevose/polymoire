@@ -3,11 +3,15 @@
 mod audio;
 mod capture;
 mod hud;
+mod library;
+mod library_ui;
+mod player;
 mod render;
 
-use audio::{AudioEngine, AudioFrame};
+use audio::{AudioEngine, AudioFrame, Tap};
 use eframe::egui;
 use eframe::egui_wgpu;
+use library::Library;
 use polymoire::director::{Director, Moment};
 use polymoire::quality::Quality;
 use polymoire::reactions::{is_drop, FrameInput, Pulse, Sound, Visual};
@@ -37,6 +41,7 @@ pub struct PolymoireApp {
     pulse: Pulse,
     quality: Quality,
     audio: AudioEngine,
+    pub library: Library,
     last_audio: AudioFrame,
     visual: Visual,
     sim: f64,
@@ -90,7 +95,8 @@ impl PolymoireApp {
                 shot_requested: false,
                 shot_saved: None,
             });
-        let mut audio = AudioEngine::new();
+        let library = Library::new();
+        let mut audio = AudioEngine::new(!library.settings.player);
         if std::env::var("POLYMOIRE_DEMO").is_ok_and(|v| v == "1") {
             audio.set_demo(true);
         }
@@ -99,6 +105,7 @@ impl PolymoireApp {
             pulse: Pulse::default(),
             quality: Quality::default(),
             audio,
+            library,
             last_audio: AudioFrame::default(),
             visual: Visual::NEUTRAL,
             sim: 0.0,
@@ -237,7 +244,17 @@ impl PolymoireApp {
 
     fn step(&mut self, dt: f64) {
         self.quality.frame(dt as f32);
-        let a = self.audio.frame();
+        self.library.frame();
+        let a = if self.player_mode() {
+            let p = &self.library.player;
+            let heard = p.heard();
+            self.audio.frame(Some(Tap {
+                feed: &p.feed,
+                beats: p.map.as_ref().zip(heard),
+            }))
+        } else {
+            self.audio.frame(None)
+        };
         let weights = self.traits.reaction(self.sim);
         let feats = self.vibe.features(dt as f32, &a.levels, &a.rhythm, a.live);
         let mood_changed = self.vibe.update(dt as f32, &feats, &a.rhythm);
@@ -308,7 +325,59 @@ impl PolymoireApp {
         )
     }
 
+    pub fn player_mode(&self) -> bool {
+        self.library.settings.player
+    }
+
+    /// Switch between listening to system audio and the media player. Only one runs.
+    pub fn set_player_mode(&mut self, on: bool) {
+        if on == self.player_mode() {
+            return;
+        }
+        self.library.settings.player = on;
+        self.audio.set_system(!on);
+        if on {
+            self.library.ui.open = true;
+        } else {
+            self.library.player.stop();
+            self.library.ui.open = false;
+        }
+        self.library.save_settings();
+    }
+
+    /// The audio status line for the HUD.
+    pub fn audio_status(&self, present: bool) -> String {
+        if !self.player_mode() {
+            return self.audio.status(present);
+        }
+        let lib = &self.library;
+        if !lib.player.status.is_empty() && lib.player.current.is_some() {
+            return lib.player.status.clone();
+        }
+        match lib
+            .player
+            .current
+            .as_ref()
+            .and_then(|id| lib.catalog.tracks.get(id))
+        {
+            Some(t) => format!("{} · {}", t.title(), t.artist()),
+            None => "Media player · nothing playing".into(),
+        }
+    }
+
     fn handle_keys(&mut self, ctx: &egui::Context) {
+        // Typing in the library's search box isn't a shortcut.
+        if ctx.egui_wants_keyboard_input() {
+            return;
+        }
+        let l = ctx.input(|i| i.key_pressed(egui::Key::L));
+        if l {
+            if self.player_mode() {
+                self.library.ui.open = !self.library.ui.open;
+            } else {
+                self.set_player_mode(true);
+            }
+        }
         let (space, n, h, f, d, esc) = ctx.input(|i| {
             (
                 i.key_pressed(egui::Key::Space),
@@ -328,7 +397,7 @@ impl PolymoireApp {
         if h {
             self.hud_visible = !self.hud_visible;
         }
-        if d {
+        if d && !self.player_mode() {
             let on = !self.audio.demo_on();
             self.audio.set_demo(on);
         }
@@ -344,6 +413,10 @@ impl PolymoireApp {
 }
 
 impl eframe::App for PolymoireApp {
+    fn on_exit(&mut self) {
+        self.library.shutdown();
+    }
+
     fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         let now = Instant::now();
         let dt = now.duration_since(self.last_frame).as_secs_f64().min(0.1);
@@ -376,6 +449,9 @@ impl eframe::App for PolymoireApp {
             self.set_fullscreen(&ctx, !self.fullscreen);
         }
         hud::show(&ctx, self);
+        if self.player_mode() {
+            library_ui::show(&ctx, self);
+        }
         ctx.request_repaint();
     }
 }

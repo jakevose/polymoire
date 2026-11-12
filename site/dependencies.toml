@@ -44,6 +44,46 @@ role = "Copies the shader's settings block to the GPU."
 why = """Tiny and ubiquitous. Its casts are unsafe internally, but the derive macros check \
 layout at compile time."""
 
+[ureq]
+scope = "app"
+risk = "medium"
+role = "Media player only: talks to Dropbox over HTTPS (sign-in, listing, downloads, the backup)."
+why = """Privacy-sensitive by design: it's the app's only network access, and it carries your \
+Dropbox sign-in. Blocking (no async runtime) with a small tree; TLS is rustls (pure Rust, \
+plus ring's audited crypto) rather than OpenSSL. Widely used, one main maintainer. Nothing \
+connects until you switch to the media player and sign in."""
+
+[symphonia]
+scope = "app"
+risk = "medium"
+role = "Media player: decodes mp3 and m4a (AAC) files and reads their tags."
+why = """Pure Rust, no unsafe codec libraries, built with only the mp3, AAC and MP4 parts. \
+It parses untrusted files, which is where decoder bugs hurt; small maintainer team."""
+
+[serde]
+scope = "app"
+risk = "low"
+role = "Media player: turns the catalog and settings into JSON and back."
+why = "The standard Rust serialization crate; already in the tree through eframe's dependencies."
+
+[serde_json]
+scope = "app"
+risk = "low"
+role = "Media player: the catalog file, settings and Dropbox's JSON API."
+why = "Same maintainers as serde, ubiquitous."
+
+[sha2]
+scope = "app"
+risk = "low"
+role = "Media player: the SHA-256 hash in Dropbox's PKCE sign-in."
+why = "RustCrypto project, widely used and pure Rust."
+
+[getrandom]
+scope = "app"
+risk = "low"
+role = "Media player: random bytes from the operating system for the sign-in's one-time secret."
+why = "Tiny wrapper over each OS's random-number API, maintained by the rust-random project."
+
 [libpulse-binding]
 scope = "linux"
 risk = "medium"

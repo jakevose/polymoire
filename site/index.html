@@ -53,6 +53,12 @@
     loudness, mood. Nothing is recorded, saved or sent anywhere.</p>
   </div>
   <div>
+    <h2>Or plays your music</h2>
+    <p>An optional player streams mp3 and m4a files from your Dropbox, maps every beat of
+    each track before it plays, and lets you browse by artist, album, genre, decade or
+    tempo, with playlists.</p>
+  </div>
+  <div>
     <h2>Never the same twice</h2>
     <p>Thirteen traits (palette, field, symmetry, texture, effect, warp and more) shift one
     or two at a time on the beat, so the picture keeps changing without ever cutting.
@@ -127,9 +133,12 @@
     are enforced by tests, and the beat detection is tested against a synthetic track with
     known kicks.</li>
     <li><strong>It does a small number of things.</strong> It draws to a window and reads
-    audio. It has no networking code, accounts, telemetry or update checks, and it saves
-    nothing (apart from a diagnostic screenshot in a developer self-test mode that's off
-    unless you switch it on with an environment variable). Every crate it depends on is listed below with a risk rating.</li>
+    audio. It has no telemetry or update checks. The only network access is the optional
+    media player: once you switch to it and sign in, it talks to Dropbox and nothing else.
+    It reads your music folder and writes exactly one file there, a backup of its catalog
+    (a test checks the code can't call any other Dropbox write). On your computer it saves
+    its settings, your Dropbox sign-in and that catalog in your user app data folder.
+    Every crate it depends on is listed below with a risk rating.</li>
     <li><strong>Treat it like the toy it is.</strong> If something breaks or looks off,
     <a href="{{repo_url}}/issues">open an issue</a>.</li>
   </ul>

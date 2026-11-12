@@ -3,6 +3,7 @@
 use super::capture::{self, Capture};
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use polymoire::analysis::{Analyzer, Hits, Levels, Rhythm, BEAT_LEAD};
+use polymoire::beatmap::BeatMap;
 use polymoire::demo::DemoSynth;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
@@ -64,7 +65,18 @@ pub struct AudioFrame {
     pub hit_counts: [u64; 3],
 }
 
+/// The media player's output, for `AudioEngine::frame` to analyze instead of system audio.
+pub struct Tap<'a> {
+    pub feed: &'a SharedFeed,
+    /// The track's beat map and the track time being heard, when both are known.
+    pub beats: Option<(&'a BeatMap, f64)>,
+}
+
 pub struct AudioEngine {
+    /// System capture is wanted (off in media player mode).
+    system_on: bool,
+    /// Track time of the last beat-map poll, to fire each mapped beat once.
+    map_polled: Option<f64>,
     system: Option<Capture>,
     system_feed: SharedFeed,
     system_status: Arc<Mutex<String>>,
@@ -83,8 +95,10 @@ fn default_output_name() -> Option<String> {
 }
 
 impl AudioEngine {
-    pub fn new() -> Self {
+    pub fn new(system: bool) -> Self {
         let mut engine = AudioEngine {
+            system_on: system,
+            map_polled: None,
             system: None,
             system_feed: Arc::new(Mutex::new(None)),
             system_status: Arc::new(Mutex::new(String::new())),
@@ -94,8 +108,23 @@ impl AudioEngine {
             output_name: None,
             last_device_check: Instant::now(),
         };
-        engine.start_system();
+        if system {
+            engine.start_system();
+        }
         engine
+    }
+
+    /// Turn system-audio capture on or off. Off also stops the demo beat.
+    pub fn set_system(&mut self, on: bool) {
+        self.system_on = on;
+        if on {
+            self.start_system();
+        } else {
+            self.set_demo(false);
+            self.system = None;
+            *self.system_feed.lock().unwrap() = None;
+            set(&self.system_status, "System audio off");
+        }
     }
 
     pub fn start_system(&mut self) {
@@ -164,7 +193,7 @@ impl AudioEngine {
     /// plugged in, a different speaker chosen) or the stream reported an error. Checked
     /// every two seconds.
     fn follow_output_device(&mut self) {
-        if self.last_device_check.elapsed().as_secs_f32() < 2.0 {
+        if !self.system_on || self.last_device_check.elapsed().as_secs_f32() < 2.0 {
             return;
         }
         self.last_device_check = Instant::now();
@@ -184,13 +213,29 @@ impl AudioEngine {
         }
     }
 
-    /// Call once per video frame.
-    pub fn frame(&mut self) -> AudioFrame {
+    /// Call once per video frame. With a `tap`, analyzes the media player instead.
+    pub fn frame(&mut self, tap: Option<Tap>) -> AudioFrame {
         self.follow_output_device();
-        let feed = if self.demo_on() {
-            &self.demo_feed
-        } else {
-            &self.system_feed
+        let mut a = self.poll(tap.as_ref().map(|t| t.feed));
+        // Mapped beats replace the live beat clock: the map was made from the whole track.
+        match tap.and_then(|t| t.beats) {
+            Some((map, heard)) => {
+                let from = self.map_polled.filter(|&p| p <= heard && heard - p < 1.0);
+                a.beat = from.is_some_and(|p| map.beat_in(p + BEAT_LEAD, heard + BEAT_LEAD));
+                a.period = map.period_at(heard);
+                a.levels.bpm = map.bpm;
+                self.map_polled = Some(heard);
+            }
+            None => self.map_polled = None,
+        }
+        a
+    }
+
+    fn poll(&mut self, tap: Option<&SharedFeed>) -> AudioFrame {
+        let feed = match tap {
+            Some(f) => f,
+            None if self.demo_on() => &self.demo_feed,
+            None => &self.system_feed,
         };
         let mut guard = feed.lock().unwrap();
         let Some(f) = guard.as_mut() else {

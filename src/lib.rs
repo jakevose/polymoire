@@ -7,9 +7,11 @@
 //! window, the GPU and the audio devices.
 
 pub mod analysis;
+pub mod beatmap;
 pub mod demo;
 pub mod director;
 pub mod dsp;
+pub mod library;
 pub mod quality;
 pub mod reactions;
 pub mod rng;

@@ -2,7 +2,8 @@
 
 A generative visualizer for Windows, macOS and Linux. It drifts between looks one or two
 traits at a time (palette, field, symmetry, texture, effect, warp, scale, tempo, spin,
-chroma, mosaic) and moves to whatever your computer is playing.
+chroma, mosaic) and moves to whatever your computer is playing, or to music it plays
+itself from your Dropbox.
 
 **Website, screenshots and downloads: https://jakevose.github.io/polymoire/**
 
@@ -10,6 +11,9 @@ chroma, mosaic) and moves to whatever your computer is playing.
 
 - **System audio.** Polymoire listens to your computer's sound output, so any player
   (Spotify, a browser tab, a DAW) drives it. Nothing is recorded or saved.
+- **Media player.** Switch the audio source to *Media player* (or press `L`) to play mp3
+  and m4a files from a Dropbox folder instead. Only one source runs at a time: the media
+  player turns system-audio listening off. See [Media player](#media-player).
 - **Demo beat.** A built-in 120 bpm house loop; toggle it with the button or `D`.
 - **Every trait gets a turn.** Automatic changes walk through all the traits in a
   shuffled order, one or two at a time, before any changes again, and never change the
@@ -22,13 +26,42 @@ chroma, mosaic) and moves to whatever your computer is playing.
   so it stops changing on its own (the arrows still work on pinned traits).
 - **Energy** sets how lively the picture is even without music: Calm, Lively, Restless,
   Electric.
-- Keys: `Space` pause · `N` shift now · `H` hide controls · `F` fullscreen · `D` demo beat.
+- Keys: `Space` pause · `N` shift now · `H` hide controls · `F` fullscreen · `D` demo beat
+  · `L` library.
   Double-click the picture for fullscreen; click it to bring hidden controls back.
 - **Reduce motion** slows everything and damps the beat reactions.
 - **Loudness sets the strength.** How loud the music is right now, compared with the
   loudest it has been in the last minute, scales every beat reaction: quiet intros and
   breakdowns move gently (down to 0.3x), steady loud sections run at about 1.1x and
   sudden swells and drops hit hardest (up to 1.25x).
+
+### Media player
+
+1. Click **Media player**, then **Connect Dropbox**. Approve Polymoire in the browser and
+   paste the code Dropbox shows you back into the app.
+2. Pick the folder your music lives in. Polymoire lists every mp3 and m4a under it.
+3. Browse by artist, album, genre, decade, tempo, folder, playlist, recently added or
+   most played, or search. Double-click to play; right-click a track for *Play next*,
+   *Add to queue* and playlists.
+
+How it behaves:
+
+- **Beat-mapped ahead of time.** Before a track plays (and while the one before it is
+  playing), Polymoire downloads it and maps every beat in the whole track, so the
+  visuals land on the beat from the first bar, through breakdowns and syncopation. The
+  map is saved, so each track is analyzed once. Until it's ready, the live beat tracker
+  fills in.
+- **Gentle on your Dropbox.** Tags are read one file at a time from the start of each
+  file, and everything is cached on your computer, so reopening the app doesn't
+  download your library again.
+- **One write, ever.** Polymoire reads your music and writes exactly one file to Dropbox:
+  `polymoire-library.json` in your music folder, a backup of its catalog (tags, beat
+  maps, play counts, playlists). On another computer, it picks up from that backup.
+- **Dropbox app key.** Dropbox needs an app key to sign in. Builds made with
+  `POLYMOIRE_DROPBOX_KEY` set include one; otherwise the app asks for yours. To make one,
+  create an app at dropbox.com/developers with *Full Dropbox* access, allow public
+  clients (PKCE), and enable the scopes `account_info.read`, `files.metadata.read`,
+  `files.content.read` and `files.content.write` (write is only used for the backup).
 
 ### Comfort: kinetic without motion sickness or flashing
 

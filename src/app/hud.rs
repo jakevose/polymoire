@@ -3,21 +3,21 @@
 use super::PolymoireApp;
 use eframe::egui::{self, Align2, Color32, CornerRadius, FontId, Sense, Stroke};
 
-const INK: Color32 = Color32::from_rgb(238, 240, 244);
-const DIM: Color32 = Color32::from_rgba_premultiplied(124, 125, 127, 133);
-const PANEL: Color32 = Color32::from_rgba_premultiplied(8, 8, 11, 205);
-const LINE: Color32 = Color32::from_rgba_premultiplied(33, 33, 33, 33);
+pub(super) const INK: Color32 = Color32::from_rgb(238, 240, 244);
+pub(super) const DIM: Color32 = Color32::from_rgba_premultiplied(124, 125, 127, 133);
+pub(super) const PANEL: Color32 = Color32::from_rgba_premultiplied(8, 8, 11, 205);
+pub(super) const LINE: Color32 = Color32::from_rgba_premultiplied(33, 33, 33, 33);
 const WIDTH: f32 = 290.0;
 
-fn mono(size: f32) -> FontId {
+pub(super) fn mono(size: f32) -> FontId {
     FontId::monospace(size)
 }
 
-fn label(text: &str) -> egui::RichText {
+pub(super) fn label(text: &str) -> egui::RichText {
     egui::RichText::new(text).font(mono(10.0)).color(INK)
 }
 
-fn pill(ui: &mut egui::Ui, text: &str, selected: bool) -> egui::Response {
+pub(super) fn pill(ui: &mut egui::Ui, text: &str, selected: bool) -> egui::Response {
     let fg = if selected { PANEL } else { INK };
     let bg = if selected {
         INK
@@ -134,7 +134,7 @@ fn panel(ui: &mut egui::Ui, app: &mut PolymoireApp, compact: bool) {
     ui.horizontal(|ui| {
         ui.label(egui::RichText::new("AUDIO").font(mono(9.0)).color(DIM));
         ui.add_space(30.0);
-        let status = app.audio.status(a.levels.present);
+        let status = app.audio_status(a.levels.present);
         ui.add(egui::Label::new(label(&status)).truncate());
     });
     ui.horizontal(|ui| {
@@ -158,14 +158,27 @@ fn panel(ui: &mut egui::Ui, app: &mut PolymoireApp, compact: bool) {
     meters(ui, &a.levels, &app.pulse);
     ui.add_space(4.0);
     ui.horizontal_wrapped(|ui| {
+        let player = app.player_mode();
+        if pill(ui, "System audio", !player).clicked() {
+            app.set_player_mode(false);
+        }
+        if pill(ui, "Media player", player).clicked() {
+            app.set_player_mode(true);
+        }
+    });
+    ui.horizontal_wrapped(|ui| {
+        let player = app.player_mode();
         let demo = app.audio.demo_on();
-        if pill(ui, if demo { "Stop demo" } else { "Demo beat" }, demo).clicked() {
+        if !player && pill(ui, if demo { "Stop demo" } else { "Demo beat" }, demo).clicked() {
             app.audio.set_demo(!demo);
+        }
+        if player && pill(ui, "Library", app.library.ui.open).clicked() {
+            app.library.ui.open = !app.library.ui.open;
         }
         if pill(ui, "Reduce motion", app.reduced_motion).clicked() {
             app.reduced_motion = !app.reduced_motion;
         }
-        if !app.audio.system_ok() && pill(ui, "Retry system audio", false).clicked() {
+        if !player && !app.audio.system_ok() && pill(ui, "Retry system audio", false).clicked() {
             app.audio.start_system();
         }
     });
@@ -173,8 +186,9 @@ fn panel(ui: &mut egui::Ui, app: &mut PolymoireApp, compact: bool) {
     ui.add(
         egui::Label::new(
             egui::RichText::new(
-                "Moves to whatever your computer is playing. Arrows change a trait, the dot pins it. \
-                 Space pauses, N shifts, H hides, F fullscreen, D demo beat.",
+                "Moves to whatever your computer or the media player is playing. Arrows change a \
+                 trait, the dot pins it. Space pauses, N shifts, H hides, F fullscreen, \
+                 D demo beat, L library.",
             )
             .font(mono(9.0))
             .color(DIM),
