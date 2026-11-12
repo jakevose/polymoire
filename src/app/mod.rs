@@ -267,16 +267,33 @@ impl PolymoireApp {
                 self.last_track = p.current.clone();
                 self.held = p.current.is_some();
             }
+            // Pausing the player holds the picture too: the analyzer would otherwise
+            // report the pause as the music stopping, and the resume as a drop.
+            if p.paused() {
+                self.held = true;
+            }
             if self.held && p.heard().is_some() && a.levels.present {
                 self.held = false;
             }
         } else {
             self.held = false;
         }
+        // While held, everything carries on from the last sound heard, not the silence.
+        let a = if self.held {
+            AudioFrame {
+                beat: false,
+                hits: Default::default(),
+                ..self.last_audio.clone()
+            }
+        } else {
+            a
+        };
         let frozen = self.paused || self.held;
         let weights = self.traits.reaction(self.sim);
-        let feats = self.vibe.features(dt as f32, &a.levels, &a.rhythm, a.live);
-        let mood_changed = self.vibe.update(dt as f32, &feats, &a.rhythm);
+        let mood_changed = !self.held && {
+            let feats = self.vibe.features(dt as f32, &a.levels, &a.rhythm, a.live);
+            self.vibe.update(dt as f32, &feats, &a.rhythm)
+        };
         // The music's intensity lifts the Energy trait; it never lowers it.
         let trait_energy = self.traits.scalar(Key::Energy, self.sim);
         let energy =

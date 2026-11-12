@@ -162,6 +162,13 @@ impl Player {
     pub fn playing(&self) -> bool {
         self.deck().playing
     }
+    /// Paused partway through a track (not finished, not loading).
+    pub fn paused(&self) -> bool {
+        let d = self.deck();
+        d.dec
+            .as_ref()
+            .is_some_and(|dec| !d.playing && (dec.duration <= 0.0 || d.pos < dec.duration - 0.5))
+    }
     pub fn position(&self) -> f64 {
         self.deck().pos
     }

@@ -227,8 +227,11 @@ it to the shader. The flow clock `flow_t` advances by the Tempo trait plus
     On the user's library: "Unknown artist" 3,524 → 193, "No year" 9,087 → 3,702.
   - *ReplayGain:* applied as gain + 6 dB, capped at 0 dB: loud masters come down to
     meet quiet ones, nothing is boosted. Files without it play unchanged.
-  - *Track change hold:* in player mode the picture freezes (like Pause) from a change
-    of track until the new track is heard and the analyzer reports sound (user request). Tags crawl one file
+  - *Track change and pause hold:* in player mode the picture freezes (like Pause)
+    from a change of track, or a pause of the player, until the track is heard and the
+    analyzer reports sound (user request). While held, the frame carries the last
+    sound heard (no beats or hits) and the vibe doesn't update: feeding it the pause's
+    silence made the resume read as a drop and "go crazy" (user report). Tags crawl one file
     at a time from the first 256 KB (a second request if the ID3 block is bigger).
   - *The one Dropbox write:* scopes can't restrict writes to a file, so the app asks for
     `files.content.write` and `dropbox.rs` enforces it; a test scans that file for every
@@ -417,3 +420,5 @@ beats within 15 ms.
   - Tags (user said continue): artist-credit splitting, genre merging, compilation
     flag, ReplayGain leveling, release-folder path guesses, cached views,
     `examples/library_probe.rs`.
+  - User: loves the new beat tracking; pausing/resuming the player made the picture go
+    crazy. The player pause now holds the picture and keeps the analysis state.
