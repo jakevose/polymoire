@@ -4,7 +4,7 @@ What a new session needs to pick up the work: where things stand, why things are
 they are, and what is still open. The code and git history say *what*; this file says
 *why* and *what's next*. Keep it current (see `CLAUDE.md`).
 
-Last updated: 2026-11-11 (media player branch).
+Last updated: 2026-11-14 (v0.2.0 released).
 
 ## Where things stand
 
@@ -27,20 +27,8 @@ Last updated: 2026-11-11 (media player branch).
      v0.1.1.
   5. On `media-player`, with whole-track beat maps: the look follows the song's
      sections and phrases, and reaction strength knows how loud the song gets (see
-     Decisions). **Ask the user how it feels.**
-- **v0.1.2 (in review as a PR, not yet tagged)** fixes two user reports:
-  1. *"If system audio stops, the app may enter a desperation phase of rapid visualizer
-     shifting."* Simulated (`tests/music_stops.rs`): after the music stopped, the old
-     timer kept shifting 1-2 traits every 4-8 s with unbiased picks (Electric energy as
-     likely as Calm), and a mood or drop shift could land right on top of a beat shift.
-     A faint noise floor instead froze the look (gate open, tempo lost, so no beats and no
-     timer). The exact burst the user saw wasn't reproduced; this is the closest mechanism
-     found. Now `src/director.rs` owns the pacing (see Decisions). **Ask the user whether
-     it's fixed on their machine.**
-  2. *"Too much time with only a couple of similar colors and a fairly flat, blurry
-     scene."* Measured with `examples/look_probe.rs`: 23% of on-screen looks were flat.
-     Now 6% (see Decisions and the baseline below).
-- **Media player (branch `media-player`, not merged).** The user asked for the
+     Decisions). The user said "I like where we're at" and released it as v0.2.0.
+- **Media player (released in v0.2.0, merged to `main`).** The user asked for the
   "counterintuitive direction": a Dropbox mp3/m4a player *inside* the visualizer, with a
   catalog, playlists and beat maps made ahead of playback. They want a "low golf score"
   first pass they'll refine, kept modular. The user has signed in to a real Dropbox
@@ -57,6 +45,11 @@ Last updated: 2026-11-11 (media player branch).
 
 ## Releases
 
+- **v0.2.0 released 2026-11-14**: the media player (Dropbox library, whole-track beat
+  maps, loudness leveling, song-structure pacing) and the silence halt. A minor bump
+  because it adds a whole feature. The installers carry a built-in Dropbox app key only
+  if the repo variable `POLYMOIRE_DROPBOX_KEY` is set (Settings → Variables → Actions);
+  it wasn't for v0.2.0, so its users are asked for their own key.
 - **v0.1.2 released 2026-11-11** (PR #1): settles when the music stops; fewer flat looks.
 - **v0.1.1 released 2026-11-10** with the more direct beat tracking (v0.1.0, the first
   release, came out the same day). Releases: github.com/jakevose/polymoire/releases.
@@ -397,6 +390,9 @@ the demo (40 min, 3 seeds):
 
 ## Open items
 
+- **Built-in Dropbox app key:** set the repo variable `POLYMOIRE_DROPBOX_KEY` (a PKCE
+  app key isn't secret) so release builds sign in without asking for a key. Then the
+  next release picks it up. The app must allow public clients (PKCE).
 - **Media player, untested pieces:** sign-in and folder listing work for the user;
   the scan on a big library, downloads, Range reads and backup upload/restore haven't
   been seen yet. Folder-count progress is uneven if one folder holds most of the
@@ -510,3 +506,8 @@ the demo (40 min, 3 seeds):
     was mid-change half the time. Added song structure to the map (bars, sections),
     section-and-phrase pacing for mapped tracks, section-aware reaction strength, and
     calmer live pacing.
+- **2026-11-14**
+  - User: "I like where we're at." Bumped to 0.2.0 (the media player is a new feature),
+    merged `media-player` into `main`, tagged `v0.2.0`. Release builds now read
+    `POLYMOIRE_DROPBOX_KEY` from a repo variable (not set yet). Screenshots regenerated:
+    byte-identical, so the site images stand.
