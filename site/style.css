@@ -75,11 +75,14 @@ section { padding: 56px 0 8px; }
 .button.primary:hover { background: #c6aaff; color: #140d24; }
 .fine { color: var(--muted); font-size: 15px; }
 
+/* Four boxes: one row on wide screens, two by two below that, never a ragged 3 + 1. */
 .features {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+  grid-template-columns: repeat(4, 1fr);
   gap: 16px;
 }
+@media (max-width: 980px) { .features { grid-template-columns: repeat(2, 1fr); } }
+@media (max-width: 560px) { .features { grid-template-columns: 1fr; } }
 .features div { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 20px; }
 .features h2 { font-size: 18px; margin: 0 0 8px; }
 .features p { margin: 0; color: var(--muted); font-size: 15px; }
@@ -110,6 +113,14 @@ thead th { font-size: 13px; text-transform: uppercase; letter-spacing: 0.06em; c
 .notes > div { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 4px 18px 8px; font-size: 15px; }
 .notes > div.yours { border-color: var(--accent); }
 .notes h3 { margin-top: 14px; }
+
+.steps { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; margin: 24px 0 16px; }
+.steps > div { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 4px 18px 10px; font-size: 15px; }
+.steps h3 { margin-top: 14px; }
+.steps ol, .steps ul { padding-left: 20px; margin: 0; }
+.steps li { margin: 6px 0; color: var(--muted); }
+.steps li strong, .steps li code { color: var(--text); }
+@media (max-width: 980px) { .steps { grid-template-columns: 1fr; } }
 
 .callout { margin-top: 48px; padding: 32px; background: linear-gradient(135deg, #1d1630, #121a24); border: 1px solid #3a2f55; border-radius: var(--radius); }
 .callout ul { padding-left: 20px; }

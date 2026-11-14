@@ -71,6 +71,9 @@ fn status_line(ui: &mut egui::Ui, lib: &Library) {
     }
 }
 
+/// Step-by-step Dropbox app setup on the website.
+const DROPBOX_HELP: &str = "https://jakevose.github.io/polymoire/#dropbox";
+
 fn setup(ui: &mut egui::Ui, lib: &mut Library) {
     heading(ui, "MEDIA PLAYER");
     ui.add_space(6.0);
@@ -83,9 +86,14 @@ fn setup(ui: &mut egui::Ui, lib: &mut Library) {
     );
     ui.add_space(10.0);
     if lib.settings.app_key().is_none() {
-        ui.label(dim(
-            "Dropbox app key (from dropbox.com/developers, with PKCE allowed)",
-        ));
+        ui.add(
+            egui::Label::new(dim(
+                "Paste your Dropbox app key. It's a one-time, five-minute setup in Dropbox. \
+                 Use the App key, not the App secret: Polymoire never needs the secret.",
+            ))
+            .wrap(),
+        );
+        ui.hyperlink_to(dim("How to get an app key"), DROPBOX_HELP);
         ui.text_edit_singleline(&mut lib.key_input);
         ui.add_space(6.0);
     }

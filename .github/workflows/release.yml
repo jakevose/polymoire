@@ -40,9 +40,10 @@ jobs:
             formats: app
     runs-on: ${{ matrix.os }}
     env:
-      # The Dropbox app key built into the media player (a repo variable; a PKCE app key
-      # is not a secret). Unset, the app asks each user for their own key.
-      POLYMOIRE_DROPBOX_KEY: ${{ vars.POLYMOIRE_DROPBOX_KEY }}
+      # The Dropbox app key built into the media player, from a repository secret (kept
+      # encrypted and masked in logs). Only the app key, never the app secret: PKCE
+      # needs no secret. Unset, the app asks each user for their own key.
+      POLYMOIRE_DROPBOX_KEY: ${{ secrets.POLYMOIRE_DROPBOX_KEY }}
     steps:
       - uses: actions/checkout@v4
 

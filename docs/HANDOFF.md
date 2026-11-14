@@ -4,7 +4,7 @@ What a new session needs to pick up the work: where things stand, why things are
 they are, and what is still open. The code and git history say *what*; this file says
 *why* and *what's next*. Keep it current (see `CLAUDE.md`).
 
-Last updated: 2026-11-14 (v0.2.0 released).
+Last updated: 2026-11-14 (v0.2.1 released).
 
 ## Where things stand
 
@@ -45,11 +45,16 @@ Last updated: 2026-11-14 (v0.2.0 released).
 
 ## Releases
 
+- **v0.2.1 released 2026-11-14**: Dropbox sign-in moved to the system keychain, a
+  Dropbox setup guide on the site and in the README, a 4-box hero.
 - **v0.2.0 released 2026-11-14**: the media player (Dropbox library, whole-track beat
   maps, loudness leveling, song-structure pacing) and the silence halt. A minor bump
-  because it adds a whole feature. The installers carry a built-in Dropbox app key only
-  if the repo variable `POLYMOIRE_DROPBOX_KEY` is set (Settings → Variables → Actions);
-  it wasn't for v0.2.0, so its users are asked for their own key.
+  because it adds a whole feature.
+- **Built-in Dropbox app key:** the installers carry one only if the repository
+  *secret* `POLYMOIRE_DROPBOX_KEY` is set (Settings → Secrets and variables → Actions).
+  Not set as of v0.2.1, so users make their own app (the site's #dropbox steps). The
+  user wants anything they set kept as a secret, so it's a secret, not a variable, even
+  though a PKCE app key ends up public inside the binary. Never the app secret.
 - **v0.1.2 released 2026-11-11** (PR #1): settles when the music stops; fewer flat looks.
 - **v0.1.1 released 2026-11-10** with the more direct beat tracking (v0.1.0, the first
   release, came out the same day). Releases: github.com/jakevose/polymoire/releases.
@@ -71,6 +76,13 @@ Last updated: 2026-11-14 (v0.2.0 released).
   format needs a square PNG, and the first dry run failed without one.
 
 ## Website
+
+- **Hero:** exactly four feature boxes in a fixed grid (4 across, 2×2 under 980 px, 1
+  column on phones). Five boxes in an auto-fit grid wrapped 3 + 2 and looked awkward
+  (user). Keep it at four, or change the grid with it.
+- **`#dropbox`:** end-user setup steps (make an app key, connect, keeping it safe,
+  troubleshooting). The app's setup screen links here (`DROPBOX_HELP` in
+  `library_ui.rs`), so keep the anchor. The README carries the same steps.
 
 - https://jakevose.github.io/polymoire/ is built by `scripts/build-site.py` (standard
   library only) and deployed by `.github/workflows/pages.yml`: on pushes to `main`, after
@@ -390,9 +402,12 @@ the demo (40 min, 3 seeds):
 
 ## Open items
 
-- **Built-in Dropbox app key:** set the repo variable `POLYMOIRE_DROPBOX_KEY` (a PKCE
-  app key isn't secret) so release builds sign in without asking for a key. Then the
-  next release picks it up. The app must allow public clients (PKCE).
+- **Built-in Dropbox app key:** if the user sets the repo secret `POLYMOIRE_DROPBOX_KEY`,
+  cut a release so the installers skip the app-key step. Their app must allow public
+  clients (PKCE) and be past Dropbox's 500-user development limit before wide use.
+- Keychain on macOS is tied to the ad-hoc code signature, which changes every build, so
+  after an update macOS may ask once to allow access ("Always Allow"). Not seen yet; ask.
+  Linux without a Secret Service: sign-in lasts one session (status line says so).
 - **Media player, untested pieces:** sign-in and folder listing work for the user;
   the scan on a big library, downloads, Range reads and backup upload/restore haven't
   been seen yet. Folder-count progress is uneven if one folder holds most of the
@@ -408,7 +423,6 @@ the demo (40 min, 3 seeds):
 - A track downloads fully before it plays (a second or two; long mixes longer).
   Progressive streaming would need a growing buffer as the media source.
 - The player's output doesn't follow a change of default output device yet.
-- Refresh token is plain text in the app data folder; move it to the OS keychain.
 - Online metadata lookup (user asked 2026-11-12): not built. Read tags were clean
   (7 odd artists in 10,364, all real credits like "1991"; numeric titles real, e.g.
   Sakamoto's *12*); the weird names were path guesses, now fixed. If it's wanted for
@@ -511,3 +525,9 @@ the demo (40 min, 3 seeds):
     merged `media-player` into `main`, tagged `v0.2.0`. Release builds now read
     `POLYMOIRE_DROPBOX_KEY` from a repo variable (not set yet). Screenshots regenerated:
     byte-identical, so the site images stand.
+  - User: five hero boxes looked awkward; the Dropbox setup had no end-user docs; secrets
+    they set must be secured. Merged the hero to four boxes in a fixed grid; wrote the
+    Dropbox steps (site `#dropbox`, README, linked from the app); moved the refresh token
+    from `settings.json` to the OS keychain (`keyring` 4, pure-Rust D-Bus on Linux; old
+    plain-text tokens migrate on first launch); release builds read the app key from a
+    repo secret. Released v0.2.1.

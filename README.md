@@ -42,10 +42,39 @@ itself from your Dropbox.
 
 ### Media player
 
-1. Click **Media player**, then **Connect Dropbox**. Approve Polymoire in the browser and
-   paste the code Dropbox shows you back into the app.
-2. Pick the folder your music lives in. Polymoire lists every mp3 and m4a under it.
-3. Browse by artist, album, genre, decade, tempo, folder, playlist, recently added or
+#### Set up Dropbox (once, about five minutes)
+
+If Polymoire shows a **Connect Dropbox** button with no app key box, your copy has a key
+built in: skip to [Connect](#connect).
+
+Dropbox only lets an app sign in with an *app key*, so you make a small private app in
+your own Dropbox account. Only you can use it.
+
+1. Go to [dropbox.com/developers/apps](https://www.dropbox.com/developers/apps), sign
+   in, and click **Create app**.
+2. Choose **Scoped access**, then **Full Dropbox** (so Polymoire can see your music
+   wherever it is). Give it any name, such as "Polymoire for Sam", and click
+   **Create app**.
+3. Open the **Permissions** tab, tick these four boxes, then click **Submit** at the
+   bottom of the page:
+   - `account_info.read`
+   - `files.metadata.read`
+   - `files.content.read`
+   - `files.content.write` (used only for Polymoire's one backup file)
+4. Back on the **Settings** tab, check that **Allow public clients (Implicit Grant &
+   PKCE)** says *Allow*. Copy the **App key**.
+
+Don't copy the **App secret**. Polymoire never needs it, and you shouldn't paste it
+anywhere. The app key isn't a password: on its own it can't open your Dropbox.
+
+#### Connect
+
+1. In Polymoire, click **Media player** (or press `L`). Paste the app key and click
+   **Connect Dropbox**.
+2. A browser window opens. Approve Polymoire, copy the code Dropbox shows, paste it back
+   into the app and click **Finish**.
+3. Pick the folder your music lives in. Polymoire lists every mp3 and m4a under it.
+4. Browse by artist, album, genre, decade, tempo, folder, playlist, recently added or
    most played, or search. Double-click to play; right-click a track for *Play next*,
    *Add to queue* and playlists. A collaboration ("Skrillex/Bladee", "A feat. B") is
    listed under each artist, and genre spellings like *Hip-Hop* and *Hip Hop* are
@@ -82,11 +111,20 @@ How it behaves:
   maps, play counts, playlists, scan progress). It's updated every couple of minutes
   during a scan and every 10 minutes otherwise. On another computer, it picks up from
   that backup.
-- **Dropbox app key.** Dropbox needs an app key to sign in. Builds made with
-  `POLYMOIRE_DROPBOX_KEY` set include one; otherwise the app asks for yours. To make one,
-  create an app at dropbox.com/developers with *Full Dropbox* access, allow public
-  clients (PKCE), and enable the scopes `account_info.read`, `files.metadata.read`,
-  `files.content.read` and `files.content.write` (write is only used for the backup).
+- **Your sign-in stays in your system keychain** (macOS Keychain, Windows Credential
+  Manager, or GNOME Keyring or KWallet on Linux), encrypted by your OS, not in a file.
+  **Disconnect** removes it. On Linux without a keyring service, you sign in each time
+  you open the app. On macOS, the first launch after an update may ask to use the
+  keychain item: click **Always Allow**.
+
+#### If something goes wrong
+
+- *"Missing scope"* or *"not permitted"* errors: a box in step 3 isn't ticked. Tick it
+  and click **Submit**, then in Polymoire click **Disconnect** and connect again. Dropbox
+  fixes permissions at sign-in time, so the new permission only applies after you
+  reconnect.
+- *"Invalid client"* or the code is rejected: check that public clients are allowed
+  (step 4), and that you pasted the app key, not the secret.
 
 ### Comfort: kinetic without motion sickness or flashing
 
@@ -187,6 +225,12 @@ Push a tag like `v0.1.0`. The **Release** workflow builds:
 
 and attaches them to a GitHub release. Run the workflow by hand (Actions → Release → Run
 workflow) to build everything as downloadable artifacts without publishing.
+
+To build a Dropbox app key into the installers (so users skip the app setup), add it as
+a repository **secret** named `POLYMOIRE_DROPBOX_KEY` (Settings → Secrets and variables →
+Actions → New repository secret). Use the app key only, never the app secret. GitHub
+keeps secrets encrypted and hides them in logs. The key still ends up inside the app,
+which is fine: a PKCE app key is meant to be public.
 
 The builds aren't signed with a paid developer certificate, so each OS asks once:
 

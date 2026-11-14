@@ -53,6 +53,15 @@ Dropbox sign-in. Blocking (no async runtime) with a small tree; TLS is rustls (p
 plus ring's audited crypto) rather than OpenSSL. Widely used, one main maintainer. Nothing \
 connects until you switch to the media player and sign in."""
 
+[keyring]
+scope = "app"
+risk = "medium"
+role = "Media player only: keeps your Dropbox sign-in in the system keychain instead of a file."
+why = """Privacy-sensitive by design: it holds the one secret the app has. It hands the work to \
+the OS (Keychain on macOS, Credential Manager on Windows, the Secret Service over D-Bus on \
+Linux, in pure Rust via zbus), so the encryption is the platform's, not the crate's. \
+Platform bindings are unsafe; a small, active maintainer team."""
+
 [symphonia]
 scope = "app"
 risk = "medium"

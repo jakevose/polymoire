@@ -147,6 +147,7 @@ impl Library {
             rx,
             settings,
         };
+        lib.load_sign_in();
         if let Some(root) = lib.settings.root.clone() {
             let cached: Catalog = store::load(store::CATALOG);
             lib.catalog = if cached.root == root {
@@ -162,6 +163,24 @@ impl Library {
             lib.connect(Arc::new(Dropbox::new(key, &token)));
         }
         lib
+    }
+
+    /// Find the Dropbox sign-in: the keychain, or a plain-text token left in
+    /// settings.json by a version before 0.2.1, which moves to the keychain here.
+    fn load_sign_in(&mut self) {
+        match self.settings.refresh_token.clone() {
+            Some(old) => {
+                if let Err(e) = store::save_token(&old) {
+                    self.status = format!(
+                        "Couldn't save your Dropbox sign-in to the system keychain ({e}). \
+                         You'll need to connect again next time."
+                    );
+                }
+                // Rewrite settings.json without the token either way.
+                self.save_settings();
+            }
+            None => self.settings.refresh_token = store::load_token(),
+        }
     }
 
     pub fn save_settings(&mut self) {
@@ -220,6 +239,7 @@ impl Library {
         self.dbx = None;
         self.account = None;
         self.settings.refresh_token = None;
+        store::delete_token();
         self.save_settings();
         self.status = "Disconnected. The catalog stays cached on this computer.".into();
     }
@@ -469,7 +489,13 @@ impl Library {
                 self.settings.refresh_token = Some(token.clone());
                 self.save_settings();
                 let key = self.settings.app_key().unwrap_or_default().to_string();
-                self.status = "Connected".into();
+                self.status = match store::save_token(&token) {
+                    Ok(()) => "Connected".into(),
+                    Err(e) => format!(
+                        "Connected for this session. Couldn't save the sign-in to the \
+                         system keychain ({e}), so you'll need to connect again next time."
+                    ),
+                };
                 self.connect(Arc::new(Dropbox::new(&key, &token)));
             }
             Event::Connected(Err(e)) => self.status = format!("Sign-in failed: {e}"),

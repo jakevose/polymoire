@@ -26,6 +26,7 @@
   <nav aria-label="Sections">
     <a href="#looks">Looks</a>
     <a href="#download">Download</a>
+    <a href="#dropbox">Dropbox</a>
     <a href="#vibe-coded">Vibe coded</a>
     <a href="#dependencies">Dependencies</a>
     <a href="{{repo_url}}">Source</a>
@@ -48,27 +49,19 @@
 
 <section class="features" aria-label="What it does">
   <div>
-    <h2>Listens to your computer</h2>
-    <p>It analyzes the sound your computer is already playing: kicks, snares, hats, tempo,
-    loudness, mood. Nothing is recorded, saved or sent anywhere.</p>
-  </div>
-  <div>
-    <h2>Or plays your music</h2>
-    <p>An optional player streams mp3 and m4a files from your Dropbox, maps every beat of
-    each track before it plays, and lets you browse by artist, album, genre, decade or
-    tempo, with playlists.</p>
+    <h2>Hears what you hear</h2>
+    <p>It follows whatever your computer plays (kicks, tempo, loudness, mood) and records
+    nothing. Or it plays your music from Dropbox, every beat mapped ahead.</p>
   </div>
   <div>
     <h2>Never the same twice</h2>
-    <p>Thirteen traits (palette, field, symmetry, texture, effect, warp and more) shift one
-    or two at a time on the beat, so the picture keeps changing without ever cutting.
-    With the player, a new section of the song brings a new scene.
-    When the music stops, it eases to a stop and waits for the next song.</p>
+    <p>Thirteen traits (palette, field, symmetry and more) shift one or two at a time on
+    the beat, never cutting. A new section of a song brings a new scene.</p>
   </div>
   <div>
     <h2>Moves with the drums</h2>
     <p>Each kick pushes the patterns forward and they coast until the next. Quiet passages
-    move gently; drops hit harder.</p>
+    move gently; drops hit harder. When the music stops, so does the picture.</p>
   </div>
   <div>
     <h2>Easy on the eyes</h2>
@@ -118,6 +111,57 @@
   <a href="{{repo_url}}/releases">releases page</a>.</p>
 </section>
 
+<section id="dropbox">
+  <h2 class="section">Play music from your Dropbox</h2>
+  <p class="intro">The media player is optional. Dropbox only lets an app sign in with an
+  <em>app key</em>, so you make a small private app in your own Dropbox account, once. It
+  takes about five minutes, and only you can use it. If Polymoire shows
+  <strong>Connect Dropbox</strong> with no app key box, your copy has a key built in: skip
+  to step 2.</p>
+  <div class="steps">
+    <div>
+      <h3>1. Make an app key</h3>
+      <ol>
+        <li>Go to <a href="https://www.dropbox.com/developers/apps">dropbox.com/developers/apps</a>
+        and click <strong>Create app</strong>.</li>
+        <li>Choose <strong>Scoped access</strong>, then <strong>Full Dropbox</strong>. Name
+        it anything and click <strong>Create app</strong>.</li>
+        <li>On the <strong>Permissions</strong> tab, tick <code>account_info.read</code>,
+        <code>files.metadata.read</code>, <code>files.content.read</code> and
+        <code>files.content.write</code>, then click <strong>Submit</strong>.</li>
+        <li>On the <strong>Settings</strong> tab, check that <strong>Allow public
+        clients</strong> says <em>Allow</em>, and copy the <strong>App key</strong>.</li>
+      </ol>
+    </div>
+    <div>
+      <h3>2. Connect</h3>
+      <ol>
+        <li>In Polymoire, click <strong>Media player</strong> (or press <code>L</code>).</li>
+        <li>Paste the app key and click <strong>Connect Dropbox</strong>.</li>
+        <li>Approve Polymoire in the browser, copy the code Dropbox shows, paste it into
+        the app and click <strong>Finish</strong>.</li>
+        <li>Pick the folder your music is in.</li>
+      </ol>
+    </div>
+    <div>
+      <h3>Keeping it safe</h3>
+      <ul>
+        <li>Copy the <strong>App key</strong>, never the <strong>App secret</strong>.
+        Polymoire doesn't need the secret; don't paste it anywhere.</li>
+        <li>Your sign-in is kept in your system keychain (Keychain on macOS, Credential
+        Manager on Windows, GNOME Keyring or KWallet on Linux), not in a file.
+        <strong>Disconnect</strong> removes it.</li>
+        <li><code>files.content.write</code> is only used for one file, Polymoire's catalog
+        backup in your music folder.</li>
+      </ul>
+    </div>
+  </div>
+  <p class="fine">Seeing "missing scope" or "not permitted"? Tick the missing box on the
+  Permissions tab, click Submit, then click <strong>Disconnect</strong> in Polymoire and
+  connect again: Dropbox only applies new permissions at sign-in. "Invalid client" usually
+  means public clients aren't allowed, or the secret was pasted instead of the key.</p>
+</section>
+
 <section id="vibe-coded" class="callout">
   <h2 class="section">Vibe coded, honestly</h2>
   <p>Polymoire was made by describing what it should do to an AI and judging the results,
@@ -138,7 +182,8 @@
     media player: once you switch to it and sign in, it talks to Dropbox and nothing else.
     It reads your music folder and writes exactly one file there, a backup of its catalog
     (a test checks the code can't call any other Dropbox write). On your computer it saves
-    its settings, your Dropbox sign-in and that catalog in your user app data folder.
+    its settings and that catalog in your user app data folder, and your Dropbox sign-in
+    in the system keychain.
     Every crate it depends on is listed below with a risk rating.</li>
     <li><strong>Treat it like the toy it is.</strong> If something breaks or looks off,
     <a href="{{repo_url}}/issues">open an issue</a>.</li>

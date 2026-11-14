@@ -1,5 +1,5 @@
-//! Local files: settings (including the Dropbox sign-in) and the catalog cache, in the
-//! platform's per-user app data folder.
+//! Local files: settings and the catalog cache, in the platform's per-user app data
+//! folder. The Dropbox sign-in lives in the system keychain instead (see `token`).
 
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use std::path::PathBuf;
@@ -12,7 +12,10 @@ pub const BUILT_IN_KEY: Option<&str> = option_env!("POLYMOIRE_DROPBOX_KEY");
 #[serde(default)]
 pub struct Settings {
     pub app_key: String,
-    /// Dropbox refresh token. Stored in plain text in the user's app data folder.
+    /// Dropbox refresh token, held in memory only. It's saved in the system keychain
+    /// (`save_token`), never in this file. Versions before 0.2.1 wrote it here in plain
+    /// text, so it is still read once, moved to the keychain and dropped from the file.
+    #[serde(skip_serializing)]
     pub refresh_token: Option<String>,
     /// The library folder in Dropbox ("" is the whole Dropbox).
     pub root: Option<String>,
@@ -68,3 +71,60 @@ pub fn save<T: Serialize>(name: &str, value: &T) -> Result<(), String> {
 
 pub const SETTINGS: &str = "settings.json";
 pub const CATALOG: &str = "library.json";
+
+/// Where the Dropbox refresh token lives: macOS Keychain, Windows Credential Manager, or
+/// the Secret Service on Linux (GNOME Keyring, KWallet). Encrypted at rest by the OS and
+/// out of the app data folder, so backups and file sync tools don't copy it.
+mod keychain {
+    pub const SERVICE: &str = "Polymoire";
+    pub const ACCOUNT: &str = "dropbox-refresh-token";
+
+    pub fn entry() -> Result<keyring::Entry, String> {
+        keyring::Entry::new(SERVICE, ACCOUNT).map_err(|e| e.to_string())
+    }
+}
+
+/// The saved Dropbox sign-in, if there is one.
+pub fn load_token() -> Option<String> {
+    keychain::entry()
+        .ok()?
+        .get_password()
+        .ok()
+        .filter(|t| !t.is_empty())
+}
+
+/// Save the Dropbox sign-in to the keychain. On failure (no keychain service, as on a
+/// bare Linux window manager) the sign-in only lasts until the app quits.
+pub fn save_token(token: &str) -> Result<(), String> {
+    keychain::entry()?
+        .set_password(token)
+        .map_err(|e| e.to_string())
+}
+
+pub fn delete_token() {
+    if let Ok(e) = keychain::entry() {
+        let _ = e.delete_credential();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn settings_never_write_the_token() {
+        let s = Settings {
+            refresh_token: Some("secret-token".into()),
+            ..Settings::default()
+        };
+        let json = serde_json::to_string(&s).unwrap();
+        assert!(!json.contains("secret-token"), "{json}");
+        assert!(!json.contains("refresh_token"), "{json}");
+    }
+
+    #[test]
+    fn old_settings_files_still_yield_the_token_for_migration() {
+        let s: Settings = serde_json::from_str(r#"{"refresh_token":"old"}"#).unwrap();
+        assert_eq!(s.refresh_token.as_deref(), Some("old"));
+    }
+}
