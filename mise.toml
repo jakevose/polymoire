@@ -57,6 +57,15 @@ run = "python3 scripts/build-site.py --fetch-release"
 description = "Check the website builds and its data is complete (deps have risk entries, screenshots exist)"
 run = "python3 scripts/build-site.py --check"
 
+[tasks.site-serve]
+description = "Build the website and serve it at http://127.0.0.1:8765/ (PORT=... to change); Ctrl-C stops it"
+depends = ["site"]
+run = """
+port="${PORT:-8765}"
+echo "Serving the site at http://127.0.0.1:$port/ (Ctrl-C to stop; rerun to rebuild)"
+python3 -m http.server "$port" --bind 127.0.0.1 --directory target/site
+"""
+
 [tasks.screenshots]
 description = "Render the website screenshots from the demo loop (needs a GPU and Pillow)"
 run = [

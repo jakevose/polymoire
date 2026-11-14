@@ -531,3 +531,5 @@ the demo (40 min, 3 seeds):
     from `settings.json` to the OS keychain (`keyring` 4, pure-Rust D-Bus on Linux; old
     plain-text tokens migrate on first launch); release builds read the app key from a
     repo secret. Released v0.2.1.
+  - Added `mise run site-serve` (build, then serve `target/site` on 127.0.0.1:8765) for
+    previewing site changes locally.

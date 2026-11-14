@@ -212,6 +212,8 @@ and deployed by `.github/workflows/pages.yml` on every push to `main`, after eve
 - `mise run site` builds it into `target/site`; `mise run site-check` (part of `mise run ci`
   and CI) fails if a dependency has no entry in `site/dependencies.toml` or a screenshot
   is missing.
+- `mise run site-serve` builds it and serves it at http://127.0.0.1:8765/ to look at
+  locally (`PORT=9000 mise run site-serve` for another port). Rerun it after changes.
 - `mise run screenshots` re-renders the screenshots from the demo loop (needs a GPU and
   Pillow). Rerun it when the visuals change noticeably.
 
