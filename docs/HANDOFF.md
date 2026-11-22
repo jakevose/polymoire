@@ -80,7 +80,8 @@ Last updated: 2026-11-22 (v0.3.0: local folder, map wait, problem files).
 - **Hero:** exactly four feature boxes in a fixed grid (4 across, 2×2 under 980 px, 1
   column on phones). Five boxes in an auto-fit grid wrapped 3 + 2 and looked awkward
   (user). Keep it at four, or change the grid with it.
-- **`#player`:** what the media player does and the one write. No Dropbox migration
+- **`#player`:** what the media player does, then three boxes: beat-mapped ahead, the
+  one write, and broken files can't crash it (keep three; the user found two odd). No Dropbox migration
   note: the user was the only person who ever set up the Dropbox sign-in, so the site
   and README dropped those steps (2026-11-22). v0.2.x's link to `#dropbox` now just
   lands on the page.
@@ -571,3 +572,5 @@ the demo (40 min, 3 seeds):
   - The user tried the map wait on their library: "felt great". Released v0.3.0.
   - The user was the only person who ever wired up Dropbox: removed the Dropbox note
     from the site and README. Site-only change; the app didn't need a release.
+  - With the Dropbox box gone the player section looked odd with two boxes; the third
+    is now "Broken files can't crash it" (Problem files, safe-Rust decoder).
