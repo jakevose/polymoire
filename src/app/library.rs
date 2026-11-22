@@ -296,6 +296,10 @@ impl Library {
                 }
                 media::read_tags(Arc::new(b), &ext)
             });
+            // Some files can't be read from their start alone (m4a with the index at the
+            // end; some mp3s Symphonia won't probe from a partial read). Locally, reading
+            // the whole file is cheap enough for the few that need it.
+            let res = res.or_else(|_| media::read_tags(Arc::new(dir.read(&id, None)?), &ext));
             Event::Tagged(id, res)
         });
     }

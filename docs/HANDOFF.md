@@ -277,7 +277,9 @@ it to the shader. The flow clock `flow_t` advances by the Tempo trait plus
     analyzer reports sound (user request). While held, the frame carries the last
     sound heard (no beats or hits) and the vibe doesn't update: feeding it the pause's
     silence made the resume read as a drop and "go crazy" (user report). Tags crawl 4
-    files at a time from the first 256 KB (a second read if the ID3 block is bigger).
+    files at a time from the first 256 KB (a second read if the ID3 block is bigger), and the whole file if that fails: m4a with the index at the end, and some mp3s
+    Symphonia won't probe from a partial read even with a 55 KB tag (6 of 16,422 on the
+    user's drive).
   - *The one write:* `<folder>/polymoire-library.json`, via `Folder::write_backup`
     (temp file, then rename). A test in `folder.rs` counts every file-writing call in
     `folder.rs`, `scan.rs` and `media.rs`. The website promises it. Keep both true.
@@ -399,10 +401,9 @@ the demo (40 min, 3 seeds):
 
 ## Open items
 
-- **Local media player untested in the window:** CI and a scan/read/tag check on
-  `~/TheoTown/music` pass, but the folder picker and library window haven't been
-  looked at on screen, and nothing has run on the user's big library. Ask the user to
-  try it (point it at their synced Dropbox music folder).
+- **Local media player:** it has run on the user's 16k-track thumb drive (scan, tags,
+  playback, backup). Ask how the picker, scan speed and Rescan felt; nothing has been
+  measured on screen.
 - Users of v0.2.x keep a Dropbox refresh token in their keychain ("Polymoire" /
   `dropbox-refresh-token`); the app can no longer delete it. The README says how.
 - The player was checked offline (decode, resample, seek) but not through a sound card.
@@ -411,9 +412,6 @@ the demo (40 min, 3 seeds):
   "Up next" queue view and drag-to-reorder playlists aren't built.
 - AAC priming delay (25–50 ms) isn't trimmed by Symphonia's MP4 reader. Map and playback
   share the timeline, so beats still line up, but seek positions are off by that much.
-- m4a files with the index at the end (ffmpeg's default) can't give tags from a partial
-  read; they keep path-guessed tags until played. Locally, reading the file's end (or
-  the whole file) is cheap now, so this is easy to fix.
 - A track is read fully into memory before it plays. Locally that's quick; on a slow
   network share a long mix may take a moment.
 - The player's output doesn't follow a change of default output device yet.
@@ -534,3 +532,7 @@ the demo (40 min, 3 seeds):
     `scan.rs` as a local walk, path-based track ids with move detection, an in-app
     folder picker; removed ureq, keyring, sha2, getrandom. Site, README and macOS usage
     strings updated; the site now generates "No networking library" truthfully.
+- **2026-11-22**
+  - First run on the user's thumb drive (`/Volumes/MPTHREE/Music`, 16,422 tracks, one
+    exit, no errors): tags read for 16,416, the backup written (11.6 MB). The 6 left
+    failed Symphonia's partial-read probe; the tag crawl now falls back to the whole file.
