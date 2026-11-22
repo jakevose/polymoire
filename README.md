@@ -1,9 +1,10 @@
 # Polymoire
 
-A generative visualizer for Windows, macOS and Linux. It drifts between looks one or two
-traits at a time (palette, field, symmetry, texture, effect, warp, scale, tempo, spin,
-chroma, mosaic) and moves to whatever your computer is playing, or to music it plays
-itself from a folder on your computer.
+A music player and generative visualizer for Windows, macOS and Linux. It plays the music
+in a folder on your computer, with every beat mapped before the song starts, or moves to
+whatever else your computer is playing. The picture drifts between looks one or two traits
+at a time (palette, field, symmetry, texture, effect, warp, scale, tempo, spin, chroma,
+mosaic).
 
 **Website, screenshots and downloads: https://jakevose.github.io/polymoire/**
 

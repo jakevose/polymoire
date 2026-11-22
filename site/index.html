@@ -3,12 +3,12 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Polymoire: a music visualizer</title>
-<meta name="description" content="A generative visualizer for Windows, macOS and Linux that drifts between looks and moves to whatever your computer is playing. Free download.">
+<title>Polymoire: a music player that paints the beat</title>
+<meta name="description" content="A music player and generative visualizer for Windows, macOS and Linux. Play your own music folder with every beat mapped ahead, or let it move to whatever your computer is playing. Free download.">
 <meta property="og:type" content="website">
 <meta property="og:url" content="{{site_url}}">
 <meta property="og:title" content="Polymoire">
-<meta property="og:description" content="A generative visualizer that drifts between looks and moves to whatever your computer is playing.">
+<meta property="og:description" content="A music player and generative visualizer: play your own music folder with every beat mapped ahead, or let it move to whatever your computer is playing.">
 <meta property="og:image" content="{{site_url}}og.jpg">
 <meta property="og:image:type" content="image/jpeg">
 <meta property="og:image:width" content="1200">
@@ -37,8 +37,9 @@
 <section class="hero">
   <img class="hero-icon" src="icon-256.png" alt="" width="96" height="96">
   <h1>Polymoire</h1>
-  <p class="lede">A generative visualizer that drifts between looks and moves to whatever your
-  computer is playing. Spotify, a browser tab, a DAW: anything you can hear.</p>
+  <p class="lede">A music player and generative visualizer. Play your own music folder, with
+  every beat mapped before the song starts, or let it move to whatever else your computer
+  is playing: Spotify, a browser tab, a DAW.</p>
   <p class="cta">
     <a class="button primary" href="#download" id="cta">Download {{version}}</a>
     <a class="button" href="{{repo_url}}">Source on GitHub</a>
@@ -49,9 +50,10 @@
 
 <section class="features" aria-label="What it does">
   <div>
-    <h2>Hears what you hear</h2>
-    <p>It follows whatever your computer plays (kicks, tempo, loudness, mood) and records
-    nothing. Or it plays your own music folder, every beat mapped ahead.</p>
+    <h2>Plays your music</h2>
+    <p>Point it at a folder of mp3s and m4as for a library with playlists, leveled
+    loudness and every beat mapped ahead. Or it follows whatever your computer plays,
+    recording nothing.</p>
   </div>
   <div>
     <h2>Never the same twice</h2>
@@ -113,7 +115,7 @@
 
 <section id="player">
   <h2 class="section">Play your own music</h2>
-  <p class="intro">The media player is optional and needs no setup or account. Click
+  <p class="intro">The media player needs no setup or account. Click
   <strong>Media player</strong> (or press <code>L</code>), pick the folder your mp3 and m4a
   files are in, and Polymoire lists everything under it. Any folder this computer can see
   works: your Music folder, an external drive, a network share, or a folder kept in sync by
@@ -155,8 +157,8 @@
     Windows, macOS and Linux for every change. The comfort rules (no flashing, gentle camera)
     are enforced by tests, and the beat detection is tested against a synthetic track with
     known kicks.</li>
-    <li><strong>It does a small number of things.</strong> It draws to a window and reads
-    audio. It never goes online: no telemetry, no update checks, no accounts. The optional
+    <li><strong>It does a small number of things.</strong> It draws to a window, listens
+    to audio and plays your music files. It never goes online: no telemetry, no update checks, no accounts. The optional
     media player reads the music folder you choose and writes exactly one file there, a
     backup of its catalog (a test checks the code has no other way to write there). It
     saves its settings and that catalog in your user app data folder.

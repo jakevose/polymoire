@@ -574,3 +574,6 @@ the demo (40 min, 3 seeds):
     from the site and README. Site-only change; the app didn't need a release.
   - With the Dropbox box gone the player section looked odd with two boxes; the third
     is now "Broken files can't crash it" (Problem files, safe-Rust decoder).
+  - User: the site copy still called it "a generative visualizer"; it has moved beyond
+    that. Title, meta/og, lede, first feature box, vibe-coded list, README intro and
+    the Cargo description now lead with "a music player and generative visualizer".
