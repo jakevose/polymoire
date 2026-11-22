@@ -415,6 +415,18 @@ the demo (40 min, 3 seeds):
 - A track is read fully into memory before it plays. Locally that's quick; on a slow
   network share a long mix may take a moment.
 - The player's output doesn't follow a change of default output device yet.
+- **A file that panics the decoder kills the app, maybe on every launch.** Release builds
+  use `panic = "abort"`, and the tag crawl starts on launch with its `tried` set only
+  in memory, so a crashing file would be retried (and crash) each launch. Symphonia
+  has no `unsafe` in the crates used, so a crafted file can't realistically run code;
+  the risk is crashes, huge allocations and hangs. Proposed (2026-11-22, not built):
+  catch panics around tag reads and analysis, a small "reading now" journal so a hard
+  crash marks the file bad on next launch, a problem-files list (hide / show in
+  Finder, never delete: the one-write promise).
+- Beat mapping speed (M3 Max, real files): ~87 ms per track-minute plus the read, so
+  0.3 s for a 3.5 min song, 7 s for an 85 min mix. Options discussed: wait for the map
+  before starting a track (with a cap), or map the whole library in the background
+  (16k tracks ≈ 1.5 core-hours), which doubles as the problem-file check.
 - Online metadata lookup (user asked 2026-11-12): not built. Read tags were clean
   (7 odd artists in 10,364, all real credits like "1991"; numeric titles real, e.g.
   Sakamoto's *12*); the weird names were path guesses, now fixed. If it's wanted for
