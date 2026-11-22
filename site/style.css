@@ -120,6 +120,8 @@ thead th { font-size: 13px; text-transform: uppercase; letter-spacing: 0.06em; c
 .steps ol, .steps ul { padding-left: 20px; margin: 0; }
 .steps li { margin: 6px 0; color: var(--muted); }
 .steps li strong, .steps li code { color: var(--text); }
+.steps p { margin: 6px 0 8px; color: var(--muted); }
+.steps p strong, .steps p code { color: var(--text); }
 @media (max-width: 980px) { .steps { grid-template-columns: 1fr; } }
 
 .callout { margin-top: 48px; padding: 32px; background: linear-gradient(135deg, #1d1630, #121a24); border: 1px solid #3a2f55; border-radius: var(--radius); }

@@ -1,17 +1,17 @@
-//! The library controller: Dropbox sign-in, choosing the library folder, syncing the
-//! catalog, a slow background crawl for tags, the local cache and the Dropbox backup.
-//! All network work runs on threads and reports back through one channel.
+//! The library controller: choosing the library folder, scanning it into the catalog, a
+//! background crawl for tags, the local cache and the backup in the library folder.
+//! File work runs on threads and reports back through one channel.
 
 use super::player::{Fetched, Player};
-use polymoire::library::catalog::{Catalog, Group, Tags, View};
-use polymoire::library::dropbox::{Dropbox, Entry, Pkce};
+use polymoire::library::catalog::{Catalog, Group, Tags, View, VERSION};
+use polymoire::library::folder::{self, Folder};
 use polymoire::library::media;
 use polymoire::library::scan::{self, Progress, Step};
 use polymoire::library::store::{self, Settings};
 use std::collections::HashSet;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{channel, Receiver, Sender};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime};
 
 /// Tags are read from the start of each file; most tag blocks fit in this.
@@ -22,14 +22,11 @@ const TAG_READS: usize = 4;
 const MAX_TAG_BYTES: u64 = 4 << 20;
 /// Save the local cache this long after a change.
 const SAVE_AFTER: Duration = Duration::from_secs(5);
-/// Back up to Dropbox at most this often (and when the app closes)...
+/// Write the backup in the library folder at most this often (and when the app closes,
+/// and after a scan that changed something).
 const BACKUP_EVERY: Duration = Duration::from_secs(600);
-/// ...or this often while a scan runs, so an interrupted scan loses little.
-const CHECKPOINT_EVERY: Duration = Duration::from_secs(120);
 
 enum Event {
-    Connected(Result<String, String>),
-    Account(Result<String, String>),
     Folders(String, Result<Vec<String>, String>),
     Restored(u64, Option<Catalog>),
     /// A sync run's findings, tagged with the run so a cancelled one is ignored.
@@ -42,9 +39,12 @@ enum Event {
 type GroupsKey = (u64, View, String);
 type ListKey = (u64, View, Option<String>, String);
 
+/// The folder picker: where it is, and what's in it once listed.
 pub struct Browse {
     pub path: String,
     pub folders: Option<Result<Vec<String>, String>>,
+    /// The path box, for typing or pasting a folder.
+    pub typed: String,
 }
 
 /// What the library window shows.
@@ -60,13 +60,9 @@ pub struct UiState {
 pub struct Library {
     pub settings: Settings,
     pub catalog: Catalog,
-    pub dbx: Option<Arc<Dropbox>>,
+    pub folder: Option<Arc<Folder>>,
     pub player: Player,
-    pub account: Option<String>,
     pub status: String,
-    pub auth: Option<Pkce>,
-    pub code_input: String,
-    pub key_input: String,
     pub browse: Option<Browse>,
     pub ui: UiState,
     pub syncing: bool,
@@ -113,13 +109,9 @@ impl Library {
         let (tx, rx) = channel();
         let mut lib = Library {
             catalog: Catalog::default(),
-            dbx: None,
+            folder: None,
             player: Player::new(settings.volume, settings.shuffle),
-            account: None,
             status: String::new(),
-            auth: None,
-            code_input: String::new(),
-            key_input: String::new(),
             browse: None,
             ui: UiState {
                 // In player mode the library is the first thing you need.
@@ -147,40 +139,24 @@ impl Library {
             rx,
             settings,
         };
-        lib.load_sign_in();
-        if let Some(root) = lib.settings.root.clone() {
-            let cached: Catalog = store::load(store::CATALOG);
-            lib.catalog = if cached.root == root {
-                cached
-            } else {
-                Catalog::new(&root)
-            };
-            lib.catalog.refresh_guesses();
-        }
-        if let (Some(key), Some(token)) =
-            (lib.settings.app_key(), lib.settings.refresh_token.clone())
-        {
-            lib.connect(Arc::new(Dropbox::new(key, &token)));
+        match lib.settings.folder.clone() {
+            Some(root) => {
+                let cached: Catalog = store::load(store::CATALOG);
+                lib.catalog = if cached.version == VERSION && cached.root == root {
+                    cached
+                } else {
+                    Catalog::new(&root)
+                };
+                lib.catalog.refresh_guesses();
+                lib.folder = Some(Arc::new(Folder::new(&root)));
+                lib.sync();
+            }
+            None => {
+                let home = folder::home().map(|h| folder::display(&h));
+                lib.browse_to(&home.unwrap_or_else(|| "/".into()));
+            }
         }
         lib
-    }
-
-    /// Find the Dropbox sign-in: the keychain, or a plain-text token left in
-    /// settings.json by a version before 0.2.1, which moves to the keychain here.
-    fn load_sign_in(&mut self) {
-        match self.settings.refresh_token.clone() {
-            Some(old) => {
-                if let Err(e) = store::save_token(&old) {
-                    self.status = format!(
-                        "Couldn't save your Dropbox sign-in to the system keychain ({e}). \
-                         You'll need to connect again next time."
-                    );
-                }
-                // Rewrite settings.json without the token either way.
-                self.save_settings();
-            }
-            None => self.settings.refresh_token = store::load_token(),
-        }
     }
 
     pub fn save_settings(&mut self) {
@@ -191,93 +167,48 @@ impl Library {
         }
     }
 
-    fn connect(&mut self, dbx: Arc<Dropbox>) {
-        let d = dbx.clone();
-        spawn(&self.tx, move || Event::Account(d.account_name()));
-        self.dbx = Some(dbx);
-        match self.settings.root.clone() {
-            Some(_) => self.sync(),
-            None => self.browse_to(""),
-        }
-    }
-
-    /// Step 1 of sign-in: open Dropbox's consent page.
-    pub fn begin_auth(&mut self) {
-        if self.settings.app_key().is_none() {
-            self.settings.app_key = self.key_input.trim().to_string();
-        }
-        let Some(key) = self.settings.app_key().map(str::to_string) else {
-            self.status = "Enter your Dropbox app key first".into();
-            return;
-        };
-        match Pkce::new() {
-            Ok(p) => {
-                open_browser(&p.auth_url(&key));
-                self.auth = Some(p);
-                self.status = "Approve in the browser, then paste the code here".into();
-            }
-            Err(e) => self.status = e,
-        }
-    }
-
-    /// Step 2: trade the pasted code for a token.
-    pub fn finish_auth(&mut self) {
-        let (Some(p), Some(key)) = (
-            self.auth.take(),
-            self.settings.app_key().map(str::to_string),
-        ) else {
-            return;
-        };
-        let code = std::mem::take(&mut self.code_input);
-        self.status = "Connecting…".into();
-        spawn(&self.tx, move || Event::Connected(p.finish(&key, &code)));
-    }
-
-    pub fn disconnect(&mut self) {
-        self.stop_sync();
-        self.player.stop();
-        self.dbx = None;
-        self.account = None;
-        self.settings.refresh_token = None;
-        store::delete_token();
-        self.save_settings();
-        self.status = "Disconnected. The catalog stays cached on this computer.".into();
-    }
-
-    pub fn auth_url(&self) -> Option<String> {
-        Some(self.auth.as_ref()?.auth_url(self.settings.app_key()?))
-    }
-
+    /// Show a folder in the picker (listed on a thread: a network drive can be slow).
     pub fn browse_to(&mut self, path: &str) {
-        let Some(dbx) = self.dbx.clone() else { return };
         self.browse = Some(Browse {
             path: path.to_string(),
             folders: None,
+            typed: path.to_string(),
         });
         let p = path.to_string();
-        spawn(&self.tx, move || Event::Folders(p.clone(), dbx.folders(&p)));
+        spawn(&self.tx, move || {
+            Event::Folders(p.clone(), folder::subfolders(std::path::Path::new(&p)))
+        });
+    }
+
+    /// The picker's path box: go to what was typed (`~` is the home folder).
+    pub fn browse_typed(&mut self) {
+        if let Some(b) = &self.browse {
+            let p = folder::display(&folder::expand(&b.typed));
+            self.browse_to(&p);
+        }
     }
 
     /// Make `path` the library folder.
     pub fn choose_root(&mut self, path: &str) {
         self.browse = None;
-        if self.settings.root.as_deref() != Some(path) {
+        if self.settings.folder.as_deref() != Some(path) {
             self.stop_sync();
             self.restore_tried = false;
             self.player.stop();
             self.catalog = Catalog::new(path);
             self.rev += 1;
             self.tried.clear();
-            self.settings.root = Some(path.to_string());
+            self.folder = Some(Arc::new(Folder::new(path)));
+            self.settings.folder = Some(path.to_string());
             self.save_settings();
         }
         self.sync();
     }
 
-    /// Bring the catalog up to date: restore the Dropbox backup first if there's no
-    /// local cache, then resume or start a full scan, or fetch the changes since the last.
+    /// Bring the catalog up to date: restore the backup in the library folder first if
+    /// there's no local cache, then walk the folder.
     pub fn sync(&mut self) {
-        let (Some(dbx), Some(root)) = (self.dbx.clone(), self.settings.root.clone()) else {
+        let Some(dir) = self.folder.clone() else {
             return;
         };
         if self.syncing {
@@ -292,26 +223,22 @@ impl Library {
         if self.catalog.tracks.is_empty() && !self.restore_tried {
             self.restore_tried = true;
             std::thread::spawn(move || {
-                let restored = dbx
-                    .read_backup(&root)
+                let restored = dir
+                    .read_backup()
                     .ok()
                     .flatten()
                     .and_then(|b| serde_json::from_slice::<Catalog>(&b).ok())
-                    .filter(|c| c.root == root);
+                    .filter(|c| c.version == VERSION);
                 let _ = tx.send(Event::Restored(run, restored));
             });
             return;
         }
-        let (state, cancel) = (self.catalog.scan.clone(), self.cancel.clone());
+        self.catalog.start_full_scan();
+        let cancel = self.cancel.clone();
         std::thread::spawn(move || {
-            let tx = Mutex::new(tx);
-            let send = |e| {
-                let _ = tx.lock().unwrap_or_else(|p| p.into_inner()).send(e);
-            };
-            let res = scan::sync(&dbx, &root, state, &cancel, |step| {
-                send(Event::Scan(run, step))
-            });
-            send(Event::Synced(run, res));
+            let send = |step| drop(tx.send(Event::Scan(run, step)));
+            let res = scan::sync(dir.root(), &cancel, send);
+            let _ = tx.send(Event::Synced(run, res));
         });
     }
 
@@ -323,53 +250,16 @@ impl Library {
         self.scan = None;
     }
 
-    /// Record one finding. The scan state moves with the files, so every save of the
-    /// catalog is a checkpoint a later sync can resume from.
+    /// Record one finding.
     fn scan_step(&mut self, step: Step) {
-        let scan = &mut self.catalog.scan;
         match step {
-            Step::Progress(p) => {
-                self.scan = Some(p);
-                return;
-            }
-            Step::Reset => scan.restart(),
-            Step::Started(cursor) => {
-                scan.pass += 1;
-                scan.cursor = Some(cursor);
-            }
-            Step::Walked {
-                depth,
-                files,
-                folders,
-            } => {
-                scan.plan(depth, &folders);
-                self.catalog.add_listing(&files);
-            }
-            Step::Page {
-                folder,
-                files,
-                cursor,
-                done,
-            } => {
-                let f = scan.folders.entry(folder).or_default();
-                f.cursor = Some(cursor);
-                f.done = done;
-                self.catalog.add_listing(&files);
-            }
-            Step::Changes { entries, cursor } => {
-                scan.cursor = Some(cursor);
-                for e in entries {
-                    match e {
-                        Entry::File(f) => {
-                            self.catalog.add_listing(&[f]);
-                        }
-                        Entry::Deleted(p) => self.catalog.delete_path(&p),
-                        Entry::Folder(_) => {}
-                    }
+            Step::Progress(p) => self.scan = Some(p),
+            Step::Files(files) => {
+                if self.catalog.add_listing(&files) {
+                    self.changed();
                 }
             }
         }
-        self.changed();
     }
 
     fn changed(&mut self) {
@@ -378,10 +268,12 @@ impl Library {
         self.backup_due = true;
     }
 
-    /// Start reading the next untagged file's tags, a few at a time (each is one small
-    /// ranged download; Dropbox rate-limits well above this). One start per frame.
+    /// Start reading the next untagged file's tags, a few at a time (each reads only the
+    /// start of the file). One start per frame.
     fn crawl(&mut self) {
-        let Some(dbx) = self.dbx.clone() else { return };
+        let Some(dir) = self.folder.clone() else {
+            return;
+        };
         if self.tagging >= TAG_READS || self.syncing {
             return;
         }
@@ -396,11 +288,11 @@ impl Library {
         self.tagging += 1;
         let (id, ext) = (t.id.clone(), t.ext().to_lowercase());
         spawn(&self.tx, move || {
-            let res = dbx.download(&id, Some(TAG_BYTES)).and_then(|mut b| {
-                // An ID3v2 block bigger than the first read (cover art): fetch all of it.
+            let res = dir.read(&id, Some(TAG_BYTES)).and_then(|mut b| {
+                // An ID3v2 block bigger than the first read (cover art): read all of it.
                 if let Some(n) = id3_size(&b).filter(|&n| n > b.len() as u64 && n <= MAX_TAG_BYTES)
                 {
-                    b = dbx.download(&id, Some(n + 4096))?;
+                    b = dir.read(&id, Some(n + 4096))?;
                 }
                 media::read_tags(Arc::new(b), &ext)
             });
@@ -413,7 +305,7 @@ impl Library {
         while let Ok(e) = self.rx.try_recv() {
             self.handle(e);
         }
-        let (fetched, started) = self.player.update(&self.catalog, self.dbx.as_ref());
+        let (fetched, started) = self.player.update(&self.catalog, self.folder.as_ref());
         for f in fetched {
             match f {
                 Fetched::Analysis(id, a, tags) => {
@@ -445,19 +337,14 @@ impl Library {
                 self.status = format!("Couldn't save the catalog: {e}");
             }
         }
-        let every = if self.syncing {
-            CHECKPOINT_EVERY
-        } else {
-            BACKUP_EVERY
-        };
-        if self.backup_due && self.last_backup.elapsed() > every {
+        if self.backup_due && !self.syncing && self.last_backup.elapsed() > BACKUP_EVERY {
             self.backup(false);
         }
     }
 
-    /// Upload the catalog backup (the app's only Dropbox write).
+    /// Write the catalog backup (the app's only write to the library folder).
     pub fn backup(&mut self, wait: bool) {
-        let (Some(dbx), Some(root)) = (self.dbx.clone(), self.settings.root.clone()) else {
+        let Some(dir) = self.folder.clone() else {
             return;
         };
         let Ok(bytes) = serde_json::to_vec(&self.catalog) else {
@@ -466,11 +353,9 @@ impl Library {
         self.backup_due = false;
         self.last_backup = Instant::now();
         if wait {
-            let _ = dbx.write_backup(&root, &bytes);
+            let _ = dir.write_backup(&bytes);
         } else {
-            spawn(&self.tx, move || {
-                Event::BackedUp(dbx.write_backup(&root, &bytes))
-            });
+            spawn(&self.tx, move || Event::BackedUp(dir.write_backup(&bytes)));
         }
     }
 
@@ -485,29 +370,17 @@ impl Library {
 
     fn handle(&mut self, e: Event) {
         match e {
-            Event::Connected(Ok(token)) => {
-                self.settings.refresh_token = Some(token.clone());
-                self.save_settings();
-                let key = self.settings.app_key().unwrap_or_default().to_string();
-                self.status = match store::save_token(&token) {
-                    Ok(()) => "Connected".into(),
-                    Err(e) => format!(
-                        "Connected for this session. Couldn't save the sign-in to the \
-                         system keychain ({e}), so you'll need to connect again next time."
-                    ),
-                };
-                self.connect(Arc::new(Dropbox::new(&key, &token)));
-            }
-            Event::Connected(Err(e)) => self.status = format!("Sign-in failed: {e}"),
-            Event::Account(Ok(name)) => self.account = Some(name),
-            Event::Account(Err(e)) => self.status = e,
             Event::Folders(path, res) => {
                 if let Some(b) = self.browse.as_mut().filter(|b| b.path == path) {
                     b.folders = Some(res);
                 }
             }
             Event::Restored(run, c) if run == self.run => {
-                if let Some(c) = c.filter(|_| self.catalog.tracks.is_empty()) {
+                if let Some(mut c) = c.filter(|_| self.catalog.tracks.is_empty()) {
+                    // Tracks are named inside the folder, so a backup made where the
+                    // folder had another path (another computer) still fits.
+                    c.root = self.catalog.root.clone();
+                    c.refresh_guesses();
                     self.catalog = c;
                     self.rev += 1;
                     self.status = "Restored the catalog from the library folder".into();
@@ -521,19 +394,17 @@ impl Library {
                 self.scan = None;
                 match res {
                     Ok(()) => {
-                        let full = !self.catalog.scan.complete;
-                        if full {
-                            self.catalog.finish_full_scan();
-                        } else {
-                            self.catalog.finish_changes();
+                        if self.catalog.finish_full_scan() {
+                            self.changed();
                         }
-                        self.changed();
                         self.status = format!("{} tracks", self.catalog.tracks.len());
-                        if full {
+                        if self.backup_due {
                             self.backup(false);
                         }
                     }
-                    Err(e) => self.status = format!("{e}. Sync again to pick up where it stopped."),
+                    // Nothing is removed after a failed scan, so an unreadable folder
+                    // (an unplugged drive) doesn't lose its tracks.
+                    Err(e) => self.status = format!("{e}. Nothing was removed; rescan to retry."),
                 }
             }
             Event::Restored(..) | Event::Scan(..) | Event::Synced(..) => {}
@@ -558,14 +429,14 @@ impl Library {
     }
 
     pub fn play(&mut self, ids: Vec<String>, start: usize) {
-        if let Some(dbx) = self.dbx.clone() {
-            self.player.play_list(ids, start, &self.catalog, &dbx);
+        if let Some(f) = self.folder.clone() {
+            self.player.play_list(ids, start, &self.catalog, &f);
         }
     }
 
     pub fn skip(&mut self, dir: i32) {
-        if let Some(dbx) = self.dbx.clone() {
-            self.player.skip(dir, &self.catalog, &dbx);
+        if let Some(f) = self.folder.clone() {
+            self.player.skip(dir, &self.catalog, &f);
         }
     }
 
@@ -615,18 +486,4 @@ fn id3_size(b: &[u8]) -> Option<u64> {
         .iter()
         .fold(0u64, |n, &x| n << 7 | (x & 0x7f) as u64);
     Some(n + 10)
-}
-
-/// Open a link in the default browser (egui's own link opening is off in this build).
-fn open_browser(url: &str) {
-    let mut cmd = if cfg!(target_os = "macos") {
-        std::process::Command::new("open")
-    } else if cfg!(windows) {
-        let mut c = std::process::Command::new("rundll32");
-        c.arg("url.dll,FileProtocolHandler");
-        c
-    } else {
-        std::process::Command::new("xdg-open")
-    };
-    let _ = cmd.arg(url).spawn();
 }

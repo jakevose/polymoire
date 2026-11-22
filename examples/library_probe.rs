@@ -1,5 +1,5 @@
-//! Summarize a saved catalog (the app's `library.json`, or the Dropbox backup): tag
-//! coverage and how the browse views group it, with timings.
+//! Summarize a saved catalog (the app's `library.json`, or `polymoire-library.json` in the
+//! music folder): tag coverage and how the browse views group it, with timings.
 //!
 //!     cargo run --release --example library_probe -- ~/Library/Application\ Support/Polymoire/library.json
 

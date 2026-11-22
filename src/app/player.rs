@@ -1,5 +1,5 @@
 //! The media player: a play queue, an output stream that decodes and resamples as it
-//! plays, and background fetches that download and beat-map the current and next track.
+//! plays, and background fetches that read and beat-map the current and next track.
 //!
 //! What it plays is pushed into its own analyzer `Feed`, exactly like the demo beat, so
 //! the visuals react to the real output. Beats come from the track's beat map when it has
@@ -9,17 +9,17 @@ use super::audio::{Feed, SharedFeed};
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use polymoire::beatmap::BeatMap;
 use polymoire::library::catalog::{Catalog, Tags, MAP_VERSION};
-use polymoire::library::dropbox::Dropbox;
+use polymoire::library::folder::Folder;
 use polymoire::library::media::{self, Decoder};
 use polymoire::rng::Rng;
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
-/// Downloaded tracks kept in memory: the current one, the next, and the last.
+/// Tracks kept in memory: the current one, the next, and the last.
 const CACHE: usize = 3;
 
-/// Recently downloaded files (track id, bytes), oldest first.
+/// Recently read files (track id, bytes), oldest first.
 type Cache = Arc<Mutex<Vec<(String, Arc<Vec<u8>>)>>>;
 
 /// What background fetches report.
@@ -107,8 +107,8 @@ pub struct Player {
     pub feed: SharedFeed,
     stream: Option<cpal::Stream>,
     cache: Cache,
-    /// Downloads and analyses under way (track ids).
-    downloading: Vec<String>,
+    /// Reads and analyses under way (track ids).
+    reading: Vec<String>,
     analyzing: Vec<String>,
     tx: Sender<Fetched>,
     rx: Receiver<Fetched>,
@@ -145,7 +145,7 @@ impl Player {
             feed: Arc::new(Mutex::new(None)),
             stream: None,
             cache: Arc::new(Mutex::new(Vec::new())),
-            downloading: Vec::new(),
+            reading: Vec::new(),
             analyzing: Vec::new(),
             tx,
             rx,
@@ -216,7 +216,13 @@ impl Player {
     }
 
     /// Play `ids` from `start` (shuffled after it, if shuffle is on).
-    pub fn play_list(&mut self, ids: Vec<String>, start: usize, cat: &Catalog, dbx: &Arc<Dropbox>) {
+    pub fn play_list(
+        &mut self,
+        ids: Vec<String>,
+        start: usize,
+        cat: &Catalog,
+        music: &Arc<Folder>,
+    ) {
         self.queue = ids;
         self.index = start.min(self.queue.len().saturating_sub(1));
         if self.shuffle && self.queue.len() > 1 {
@@ -224,7 +230,7 @@ impl Player {
             self.rng.shuffle(&mut self.queue[1..]);
             self.index = 0;
         }
-        self.start(cat, dbx);
+        self.start(cat, music);
     }
 
     /// Insert after the current track.
@@ -237,7 +243,7 @@ impl Player {
         self.queue.push(id);
     }
 
-    pub fn skip(&mut self, dir: i32, cat: &Catalog, dbx: &Arc<Dropbox>) {
+    pub fn skip(&mut self, dir: i32, cat: &Catalog, music: &Arc<Folder>) {
         // "Previous" restarts the track unless it's just begun.
         if dir < 0 && self.position() > 3.0 {
             self.seek(0.0);
@@ -248,10 +254,10 @@ impl Player {
             return;
         }
         self.index = next as usize;
-        self.start(cat, dbx);
+        self.start(cat, music);
     }
 
-    fn start(&mut self, cat: &Catalog, dbx: &Arc<Dropbox>) {
+    fn start(&mut self, cat: &Catalog, music: &Arc<Folder>) {
         let Some(id) = self.queue.get(self.index).cloned() else {
             return;
         };
@@ -270,11 +276,11 @@ impl Player {
         self.counted = false;
         match self.cached(&id) {
             Some(bytes) => self.open(&id, bytes, cat),
-            None => self.status = "Downloading…".into(),
+            None => self.status = "Loading…".into(),
         }
-        self.fetch(&id, cat, dbx);
+        self.fetch(&id, cat, music);
         if let Some(next) = self.queue.get(self.index + 1).cloned() {
-            self.fetch(&next, cat, dbx);
+            self.fetch(&next, cat, music);
         }
     }
 
@@ -283,34 +289,34 @@ impl Player {
         c.iter().find(|(k, _)| k == id).map(|(_, b)| b.clone())
     }
 
-    /// Download (unless cached) and, if it has no beat map yet, analyze, on a thread.
-    fn fetch(&mut self, id: &str, cat: &Catalog, dbx: &Arc<Dropbox>) {
+    /// Read (unless cached) and, if it has no beat map yet, analyze, on a thread.
+    fn fetch(&mut self, id: &str, cat: &Catalog, music: &Arc<Folder>) {
         let Some(t) = cat.tracks.get(id) else { return };
         let busy = |v: &Vec<String>| v.iter().any(|i| i == id);
         let stale = t.beats.as_ref().is_none_or(|b| b.v != MAP_VERSION);
         let needs_analysis =
             (stale || t.duration <= 0.0 || t.loudness.is_none()) && !busy(&self.analyzing);
         let hit = self.cached(id);
-        if busy(&self.downloading) || (hit.is_some() && !needs_analysis) {
+        if busy(&self.reading) || (hit.is_some() && !needs_analysis) {
             return;
         }
         if hit.is_none() {
-            self.downloading.push(id.to_string());
+            self.reading.push(id.to_string());
         }
         if needs_analysis {
             self.analyzing.push(id.to_string());
         }
-        let (id, ext, tx, dbx, cache) = (
+        let (id, ext, tx, music, cache) = (
             id.to_string(),
             t.ext().to_lowercase(),
             self.tx.clone(),
-            dbx.clone(),
+            music.clone(),
             self.cache.clone(),
         );
         std::thread::spawn(move || {
             let bytes = match hit {
                 Some(b) => b,
-                None => match dbx.download(&id, None) {
+                None => match music.read(&id, None) {
                     Ok(b) => {
                         let b = Arc::new(b);
                         let mut c = cache.lock().unwrap();
@@ -364,13 +370,13 @@ impl Player {
     pub fn update(
         &mut self,
         cat: &Catalog,
-        dbx: Option<&Arc<Dropbox>>,
+        music: Option<&Arc<Folder>>,
     ) -> (Vec<Fetched>, Option<String>) {
         let mut out = Vec::new();
         while let Ok(msg) = self.rx.try_recv() {
             match &msg {
                 Fetched::Bytes(id, bytes) => {
-                    self.downloading.retain(|i| i != id);
+                    self.reading.retain(|i| i != id);
                     let opened = self.deck().dec.is_some();
                     if self.current.as_deref() == Some(id) && !opened {
                         self.open(&id.clone(), bytes.clone(), cat);
@@ -388,7 +394,7 @@ impl Player {
                     }
                 }
                 Fetched::Failed(id, e) => {
-                    self.downloading.retain(|i| i != id);
+                    self.reading.retain(|i| i != id);
                     self.analyzing.retain(|i| i != id);
                     if self.current.as_deref() == Some(id) {
                         self.status = e.clone();
@@ -399,8 +405,8 @@ impl Player {
         }
         let ended = std::mem::take(&mut self.deck().ended);
         if ended {
-            match dbx {
-                Some(dbx) if self.index + 1 < self.queue.len() => self.skip(1, cat, dbx),
+            match music {
+                Some(m) if self.index + 1 < self.queue.len() => self.skip(1, cat, m),
                 _ => self.status = "End of the queue".into(),
             }
         }

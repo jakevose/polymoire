@@ -3,7 +3,7 @@
 A generative visualizer for Windows, macOS and Linux. It drifts between looks one or two
 traits at a time (palette, field, symmetry, texture, effect, warp, scale, tempo, spin,
 chroma, mosaic) and moves to whatever your computer is playing, or to music it plays
-itself from your Dropbox.
+itself from a folder on your computer.
 
 **Website, screenshots and downloads: https://jakevose.github.io/polymoire/**
 
@@ -12,7 +12,7 @@ itself from your Dropbox.
 - **System audio.** Polymoire listens to your computer's sound output, so any player
   (Spotify, a browser tab, a DAW) drives it. Nothing is recorded or saved.
 - **Media player.** Switch the audio source to *Media player* (or press `L`) to play mp3
-  and m4a files from a Dropbox folder instead. Only one source runs at a time: the media
+  and m4a files from a music folder instead. Only one source runs at a time: the media
   player turns system-audio listening off. See [Media player](#media-player).
 - **Demo beat.** A built-in 120 bpm house loop; toggle it with the button or `D`.
 - **Changes on the beat.** With system audio, one or two traits change every two or
@@ -42,38 +42,16 @@ itself from your Dropbox.
 
 ### Media player
 
-#### Set up Dropbox (once, about five minutes)
+No account or setup:
 
-If Polymoire shows a **Connect Dropbox** button with no app key box, your copy has a key
-built in: skip to [Connect](#connect).
-
-Dropbox only lets an app sign in with an *app key*, so you make a small private app in
-your own Dropbox account. Only you can use it.
-
-1. Go to [dropbox.com/developers/apps](https://www.dropbox.com/developers/apps), sign
-   in, and click **Create app**.
-2. Choose **Scoped access**, then **Full Dropbox** (so Polymoire can see your music
-   wherever it is). Give it any name, such as "Polymoire for Sam", and click
-   **Create app**.
-3. Open the **Permissions** tab, tick these four boxes, then click **Submit** at the
-   bottom of the page:
-   - `account_info.read`
-   - `files.metadata.read`
-   - `files.content.read`
-   - `files.content.write` (used only for Polymoire's one backup file)
-4. Back on the **Settings** tab, check that **Allow public clients (Implicit Grant &
-   PKCE)** says *Allow*. Copy the **App key**.
-
-Don't copy the **App secret**. Polymoire never needs it, and you shouldn't paste it
-anywhere. The app key isn't a password: on its own it can't open your Dropbox.
-
-#### Connect
-
-1. In Polymoire, click **Media player** (or press `L`). Paste the app key and click
-   **Connect Dropbox**.
-2. A browser window opens. Approve Polymoire, copy the code Dropbox shows, paste it back
-   into the app and click **Finish**.
-3. Pick the folder your music lives in. Polymoire lists every mp3 and m4a under it.
+1. Click **Media player** (or press `L`).
+2. Pick the folder your music lives in: browse from your home folder, or type or paste a
+   path (`~` means your home folder). Any folder this computer can see works, including
+   an external drive, a network share, or a folder a cloud app (Dropbox, OneDrive,
+   Google Drive) keeps in sync. Polymoire lists every mp3 and m4a under it. On macOS,
+   the first time you choose a folder in Documents, Desktop, Downloads or on another
+   drive, macOS asks whether Polymoire may read it.
+3. Click **Use this folder**.
 4. Browse by artist, album, genre, decade, tempo, folder, playlist, recently added or
    most played, or search. Double-click to play; right-click a track for *Play next*,
    *Add to queue* and playlists. A collaboration ("Skrillex/Bladee", "A feat. B") is
@@ -84,7 +62,7 @@ anywhere. The app key isn't a password: on its own it can't open your Dropbox.
 How it behaves:
 
 - **Beat-mapped ahead of time.** Before a track plays (and while the one before it is
-  playing), Polymoire downloads it and maps every beat in the whole track, so the
+  playing), Polymoire reads it and maps every beat in the whole track, so the
   visuals land on the beat from the first bar, through breakdowns, syncopation and
   tempo changes. The map is saved (about a byte per beat), so each track is analyzed
   once. Until it's ready, the live beat tracker
@@ -101,30 +79,22 @@ How it behaves:
   are used if it has them.
 - **A still picture between songs.** When the track changes, the picture holds still
   until the next one starts making sound.
-- **Gentle on your Dropbox.** The first scan of a big library shows how far it has got
-  and roughly how long is left, and it can be interrupted: it picks up where it stopped,
-  even on another computer. After that, syncing only fetches what changed. Tags are
-  read one file at a time from the start of each file, and everything is cached on
-  your computer, so reopening the app doesn't download your library again.
-- **One write, ever.** Polymoire reads your music and writes exactly one file to Dropbox:
+- **Quick to keep up to date.** Opening the library (or clicking **Rescan**) walks the
+  folder, usually in a few seconds even for a big library; tracks appear as each
+  folder is read. Files that moved or were renamed keep their tags, beat map and play
+  count. If part of the folder can't be read (an unplugged drive), nothing is removed.
+  Tags are read in the background from the start of each file, and everything is
+  cached on your computer.
+- **One write, ever.** Polymoire only reads your music. The one file it writes is
   `polymoire-library.json` in your music folder, a backup of its catalog (tags, beat
-  maps, play counts, playlists, scan progress). It's updated every couple of minutes
-  during a scan and every 10 minutes otherwise. On another computer, it picks up from
-  that backup.
-- **Your sign-in stays in your system keychain** (macOS Keychain, Windows Credential
-  Manager, or GNOME Keyring or KWallet on Linux), encrypted by your OS, not in a file.
-  **Disconnect** removes it. On Linux without a keyring service, you sign in each time
-  you open the app. On macOS, the first launch after an update may ask to use the
-  keychain item: click **Always Allow**.
-
-#### If something goes wrong
-
-- *"Missing scope"* or *"not permitted"* errors: a box in step 3 isn't ticked. Tick it
-  and click **Submit**, then in Polymoire click **Disconnect** and connect again. Dropbox
-  fixes permissions at sign-in time, so the new permission only applies after you
-  reconnect.
-- *"Invalid client"* or the code is rejected: check that public clients are allowed
-  (step 4), and that you pasted the app key, not the secret.
+  maps, play counts, playlists), updated at most every 10 minutes and when you quit.
+  Another computer that sees the same folder (a shared drive, or one a cloud app syncs)
+  picks up from that backup.
+- **Used the Dropbox sign-in (0.2.x)?** It's gone: Dropbox's rate limits made big
+  libraries impractical. Install the Dropbox desktop app and choose your music folder
+  inside the Dropbox folder on your computer. The old sign-in is still in your system
+  keychain under "Polymoire"; you can delete it there, and revoke the app at
+  dropbox.com/account/connected_apps.
 
 ### Comfort: kinetic without motion sickness or flashing
 
@@ -227,12 +197,6 @@ Push a tag like `v0.1.0`. The **Release** workflow builds:
 
 and attaches them to a GitHub release. Run the workflow by hand (Actions → Release → Run
 workflow) to build everything as downloadable artifacts without publishing.
-
-To build a Dropbox app key into the installers (so users skip the app setup), add it as
-a repository **secret** named `POLYMOIRE_DROPBOX_KEY` (Settings → Secrets and variables →
-Actions → New repository secret). Use the app key only, never the app secret. GitHub
-keeps secrets encrypted and hides them in logs. The key still ends up inside the app,
-which is fine: a PKCE app key is meant to be public.
 
 The builds aren't signed with a paid developer certificate, so each OS asks once:
 

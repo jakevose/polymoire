@@ -28,6 +28,16 @@ cat > "$app/Contents/Info.plist" <<PLIST
 	<key>NSHighResolutionCapable</key><true/>
 	<key>NSAudioCaptureUsageDescription</key>
 	<string>Polymoire listens to what your Mac is playing so the visuals can move to the music. Nothing is recorded or saved.</string>
+	<key>NSDocumentsFolderUsageDescription</key>
+	<string>Polymoire reads the music folder you choose so it can play your mp3 and m4a files.</string>
+	<key>NSDownloadsFolderUsageDescription</key>
+	<string>Polymoire reads the music folder you choose so it can play your mp3 and m4a files.</string>
+	<key>NSDesktopFolderUsageDescription</key>
+	<string>Polymoire reads the music folder you choose so it can play your mp3 and m4a files.</string>
+	<key>NSRemovableVolumesUsageDescription</key>
+	<string>Polymoire reads the music folder you choose on this drive so it can play your mp3 and m4a files.</string>
+	<key>NSNetworkVolumesUsageDescription</key>
+	<string>Polymoire reads the music folder you choose on this network drive so it can play your mp3 and m4a files.</string>
 </dict>
 </plist>
 PLIST

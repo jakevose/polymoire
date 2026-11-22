@@ -4,7 +4,7 @@ What a new session needs to pick up the work: where things stand, why things are
 they are, and what is still open. The code and git history say *what*; this file says
 *why* and *what's next*. Keep it current (see `CLAUDE.md`).
 
-Last updated: 2026-11-14 (v0.2.1 released).
+Last updated: 2026-11-21 (Dropbox dropped for a local folder; not released yet).
 
 ## Where things stand
 
@@ -28,17 +28,16 @@ Last updated: 2026-11-14 (v0.2.1 released).
   5. On `media-player`, with whole-track beat maps: the look follows the song's
      sections and phrases, and reaction strength knows how loud the song gets (see
      Decisions). The user said "I like where we're at" and released it as v0.2.0.
-- **Media player (released in v0.2.0, merged to `main`).** The user asked for the
-  "counterintuitive direction": a Dropbox mp3/m4a player *inside* the visualizer, with a
-  catalog, playlists and beat maps made ahead of playback. They want a "low golf score"
-  first pass they'll refine, kept modular. The user has signed in to a real Dropbox
-  account; the folder listing then failed with a bare "http status: 400". Fixed blind
-  (no account here): JSON calls now send exactly `application/json` (ureq adds
-  `; charset=utf-8`), and every error shows Dropbox's own explanation. **Ask whether
-  the folder list works now; if not, the new message says why.** The surfaced error
-  showed the real cause: the user's Dropbox app lacked the `files.metadata.read` scope
-  (the content type wasn't the problem). Scopes are fixed when the token is granted, so
-  enabling one in the App Console also needs Disconnect then Connect.
+- **Media player: a local folder (since 2026-11-21, unreleased).** v0.2.0 shipped it
+  on Dropbox (the user's "counterintuitive direction": a player *inside* the
+  visualizer, with a catalog, playlists and beat maps made ahead). The user then
+  dropped Dropbox: **its rate limits made it impractical** for a big library. The
+  player now points at a folder on this computer (any path: external drive, network
+  share, or a folder a cloud app syncs, which is how Dropbox users carry on). Scanning,
+  tags, beat maps, loudness, catalog, views, playlists and the backup file all work as
+  before. The app has **no network code at all** now (ureq, keyring, sha2, getrandom
+  removed), and the site says so. Next release should be 0.3.0 (site copy says "Version
+  0.3 dropped it").
 - **Trait changes** now go through a shuffle bag (every trait changes once per round,
   never twice in a row). The user asked about "effects"; this assumes they meant the
   trait rows, not the options within the Effect trait. Not confirmed.
@@ -50,11 +49,9 @@ Last updated: 2026-11-14 (v0.2.1 released).
 - **v0.2.0 released 2026-11-14**: the media player (Dropbox library, whole-track beat
   maps, loudness leveling, song-structure pacing) and the silence halt. A minor bump
   because it adds a whole feature.
-- **Built-in Dropbox app key:** the installers carry one only if the repository
-  *secret* `POLYMOIRE_DROPBOX_KEY` is set (Settings → Secrets and variables → Actions).
-  Not set as of v0.2.1, so users make their own app (the site's #dropbox steps). The
-  user wants anything they set kept as a secret, so it's a secret, not a variable, even
-  though a PKCE app key ends up public inside the binary. Never the app secret.
+- The release workflow no longer reads `POLYMOIRE_DROPBOX_KEY`. If the user ever set
+  that repo secret, it can be deleted. The user wants anything they set kept as a
+  secret (repo secrets, not variables).
 - **v0.1.2 released 2026-11-11** (PR #1): settles when the music stops; fewer flat looks.
 - **v0.1.1 released 2026-11-10** with the more direct beat tracking (v0.1.0, the first
   release, came out the same day). Releases: github.com/jakevose/polymoire/releases.
@@ -80,9 +77,9 @@ Last updated: 2026-11-14 (v0.2.1 released).
 - **Hero:** exactly four feature boxes in a fixed grid (4 across, 2×2 under 980 px, 1
   column on phones). Five boxes in an auto-fit grid wrapped 3 + 2 and looked awkward
   (user). Keep it at four, or change the grid with it.
-- **`#dropbox`:** end-user setup steps (make an app key, connect, keeping it safe,
-  troubleshooting). The app's setup screen links here (`DROPBOX_HELP` in
-  `library_ui.rs`), so keep the anchor. The README carries the same steps.
+- **`#player`:** what the media player does, the one write, and a note for Dropbox
+  sign-in users. v0.2.x apps link to `#dropbox`, so that id stays (on the note's
+  heading).
 
 - https://jakevose.github.io/polymoire/ is built by `scripts/build-site.py` (standard
   library only) and deployed by `.github/workflows/pages.yml`: on pushes to `main`, after
@@ -125,9 +122,9 @@ Last updated: 2026-11-14 (v0.2.1 released).
 | `src/demo.rs` | 120 bpm house loop. **The only ground truth for the analysis tests** |
 | `src/app/` | Window, audio devices, HUD, frame loop (`mod.rs::step`) |
 | `src/beatmap.rs` | Offline whole-track beat mapping (onset bands → tempo → DP beats → refine) |
-| `src/library/` | `catalog` (model, views, playlists), `dropbox` (API, the one write), `scan` (resumable full scan, then changes only), `media` (Symphonia), `store` (app data files) |
-| `src/app/player.rs` | Queue, output stream that decodes + resamples in the callback, background fetch/analysis |
-| `src/app/library.rs` / `library_ui.rs` | Sign-in, folder choice, sync, tag crawl, cache + backup / library window, now-playing bar |
+| `src/library/` | `catalog` (model, views, playlists, move detection), `folder` (reads, picker listing, the one write), `scan` (walks the folder), `media` (Symphonia), `store` (app data files) |
+| `src/app/player.rs` | Queue, output stream that decodes + resamples in the callback, background read/analysis |
+| `src/app/library.rs` / `library_ui.rs` | Folder choice, scan, tag crawl, cache + backup / folder picker, library window, now-playing bar |
 | `examples/library_probe.rs` | Tag coverage and browse-view grouping of a saved catalog (the user's `library.json`) |
 | `examples/beatmap_probe.rs` | Beat-map local files; `--write-demo` + `--demo-grid` score encoded demo files |
 | `examples/pulse_probe.rs` | Measures kick accuracy and how well each visual signal pulses |
@@ -247,7 +244,7 @@ it to the shader. The flow clock `flow_t` advances by the Tempo trait plus
     without a clear onset (breakdowns) spread evenly between heard ones. "Clear" is
     relative to the track's median beat; a fixed threshold let hats break it. Hop 128 was
     tried: kicks got sharper but breakdowns fell apart (DP effectively looser).
-  - *Fetching:* the current and next track are downloaded whole (3 kept in memory) and
+  - *Fetching:* the current and next track are read whole (3 kept in memory) and
     analyzed on a thread once.
   - *Beat storage:* ms times as second differences (interval changes), zero runs
     collapsed, zigzag varints, base64url: ~1.2 chars/beat on the demo, a few bytes for a
@@ -279,31 +276,31 @@ it to the shader. The flow clock `flow_t` advances by the Tempo trait plus
     from a change of track, or a pause of the player, until the track is heard and the
     analyzer reports sound (user request). While held, the frame carries the last
     sound heard (no beats or hits) and the vibe doesn't update: feeding it the pause's
-    silence made the resume read as a drop and "go crazy" (user report). Tags crawl one file
-    at a time from the first 256 KB (a second request if the ID3 block is bigger).
-  - *The one Dropbox write:* scopes can't restrict writes to a file, so the app asks for
-    `files.content.write` and `dropbox.rs` enforces it; a test scans that file for every
-    `files/…` endpoint. The website now says so. Keep both true.
-  - *Catalog:* one JSON file, local cache in the app data folder (saved 5 s after a
-    change), backed up to `<root>/polymoire-library.json` every 10 min and on exit, and
-    restored from there when a folder has no local cache. Track identity is the Dropbox
-    file id (survives moves); a changed content hash drops tags and beat map.
-  - *Sync = resumable full scan, then changes only (`scan.rs`).* Dropbox gives no folder
-    size, so the scan walks the top levels (one request per folder) until it has 24+
-    folders or is 3 deep, then lists each whole on 4 threads; "folders done of total"
-    drives the bar and the time-left guess. Everything goes to the UI thread as ordered
-    `Step`s and lands in `Catalog::scan` (per-folder cursors, walk depth, pass number)
-    together with the files, so every catalog save is a checkpoint. Local save 5 s
-    after a change; Dropbox backup every 2 min during a scan (10 min otherwise). A
-    resumed scan reuses the saved depth so the folders line up.
-  - *Pruning:* tracks carry the full-scan `pass` that saw them; only the end of a full
-    scan removes unseen ones. Before listing anything the scan takes a recursive
-    `get_latest_cursor`, so later syncs `list_folder/continue` from it and fetch only
-    changes (applied in order; deleted tracks wait in `scan.gone` until the sync ends,
-    so a move keeps tags, beats and plays). An expired cursor (`409 reset`) starts a
-    new full scan. Retries rate limits and dropped connections, not refusals.
-  - *Sign-in:* PKCE with a pasted code (no loopback server). Refresh token stored in
-    plain text in `settings.json`.
+    silence made the resume read as a drop and "go crazy" (user report). Tags crawl 4
+    files at a time from the first 256 KB (a second read if the ID3 block is bigger).
+  - *The one write:* `<folder>/polymoire-library.json`, via `Folder::write_backup`
+    (temp file, then rename). A test in `folder.rs` counts every file-writing call in
+    `folder.rs`, `scan.rs` and `media.rs`. The website promises it. Keep both true.
+  - *Catalog:* one JSON file (`VERSION` 2), local cache in the app data folder (saved
+    5 s after a change), backed up to the library folder after a scan that changed
+    something, every 10 min if changed, and on exit; restored from there when the folder
+    has no local cache. Version 1 (Dropbox) catalogs and settings are ignored.
+  - *Track identity:* the path inside the library folder, `/`-separated. Relative, so a
+    backup still fits where the folder has another path (another computer). The change
+    "hash" is size + mtime (hashing would mean reading every file).
+  - *Scan:* one thread walks the whole folder each sync (local listing is fast: 15
+    files in 0.35 ms; the user's ~16k-track library untested). Skips dot-files (incl.
+    macOS `._` files), doesn't follow linked folders (loops). Files go to the catalog
+    per folder; tracks not seen are removed only after a clean walk, so an unreadable
+    subfolder or unplugged drive removes nothing. The Dropbox design (top-level walk,
+    per-folder cursors, resumable scan, change cursor) was dropped with it: a local walk
+    is cheap enough to redo.
+  - *Moves:* at the end of a scan, a vanished track and a new one with the same size
+    and mtime (unique on both sides) are one file moved: it keeps tags, beat map, plays
+    and playlist places. Replaces Dropbox's stable file ids.
+  - *Folder picker:* in-app (no native dialog crate), starts at home, with a path box
+    (`~` expands). macOS Info.plist carries usage strings for Documents, Desktop,
+    Downloads, removable and network volumes.
 
 - **Silence stops the picture (`Halt`, user request 2026-11-12).** After 1 s without
   sound (not live, or below `PRESENCE_RMS`), the frame loop's motion speed eases to 0
@@ -402,26 +399,23 @@ the demo (40 min, 3 seeds):
 
 ## Open items
 
-- **Built-in Dropbox app key:** if the user sets the repo secret `POLYMOIRE_DROPBOX_KEY`,
-  cut a release so the installers skip the app-key step. Their app must allow public
-  clients (PKCE) and be past Dropbox's 500-user development limit before wide use.
-- Keychain on macOS is tied to the ad-hoc code signature, which changes every build, so
-  after an update macOS may ask once to allow access ("Always Allow"). Not seen yet; ask.
-  Linux without a Secret Service: sign-in lasts one session (status line says so).
-- **Media player, untested pieces:** sign-in and folder listing work for the user;
-  the scan on a big library, downloads, Range reads and backup upload/restore haven't
-  been seen yet. Folder-count progress is uneven if one folder holds most of the
-  library (e.g. one giant "Compilations"). The player was checked offline
-  (decode, resample, seek) but not through a sound card. Ask the user to try it.
+- **Local media player untested in the window:** CI and a scan/read/tag check on
+  `~/TheoTown/music` pass, but the folder picker and library window haven't been
+  looked at on screen, and nothing has run on the user's big library. Ask the user to
+  try it (point it at their synced Dropbox music folder).
+- Users of v0.2.x keep a Dropbox refresh token in their keychain ("Polymoire" /
+  `dropbox-refresh-token`); the app can no longer delete it. The README says how.
+- The player was checked offline (decode, resample, seek) but not through a sound card.
 - Ask the user: are the browse views right (Artists, Albums, Genres, Years by decade,
   Tempo bands, Folders, Playlists, Recently added, Most played, Songs)? Album art, an
   "Up next" queue view and drag-to-reorder playlists aren't built.
 - AAC priming delay (25–50 ms) isn't trimmed by Symphonia's MP4 reader. Map and playback
   share the timeline, so beats still line up, but seek positions are off by that much.
 - m4a files with the index at the end (ffmpeg's default) can't give tags from a partial
-  read; they keep path-guessed tags until played. A suffix Range read could fix it.
-- A track downloads fully before it plays (a second or two; long mixes longer).
-  Progressive streaming would need a growing buffer as the media source.
+  read; they keep path-guessed tags until played. Locally, reading the file's end (or
+  the whole file) is cheap now, so this is easy to fix.
+- A track is read fully into memory before it plays. Locally that's quick; on a slow
+  network share a long mix may take a moment.
 - The player's output doesn't follow a change of default output device yet.
 - Online metadata lookup (user asked 2026-11-12): not built. Read tags were clean
   (7 odd artists in 10,364, all real credits like "1991"; numeric titles real, e.g.
@@ -429,7 +423,8 @@ the demo (40 min, 3 seeds):
   files whose tags are missing or junk: MusicBrainz text search (no key, 1 req/s,
   User-Agent with the repo URL) for files with a usable title; AcoustID fingerprints
   (pure-Rust chromaprint port, needs an app key, whole-file download) for the rest.
-  Either breaks the "only Dropbox" privacy claim on the site: make it opt-in.
+  Either breaks the "never goes online" claim on the site: make it opt-in, and update
+  the site (its no-networking line is generated from the crate list).
 - The website screenshots don't show the player yet (`mise run screenshots`).
 - Mapped pacing: ask the user how it feels (calmer, changes at the right moments?).
   Next steps if wanted: a mood per section computed offline (the live mood lags a
@@ -533,3 +528,9 @@ the demo (40 min, 3 seeds):
     repo secret. Released v0.2.1.
   - Added `mise run site-serve` (build, then serve `target/site` on 127.0.0.1:8765) for
     previewing site changes locally.
+- **2026-11-21**
+  - User: drop Dropbox (rate limits made it impractical), point at a local folder, keep
+    the rest of scanning and processing. Replaced `dropbox.rs` with `folder.rs`, rewrote
+    `scan.rs` as a local walk, path-based track ids with move detection, an in-app
+    folder picker; removed ureq, keyring, sha2, getrandom. Site, README and macOS usage
+    strings updated; the site now generates "No networking library" truthfully.

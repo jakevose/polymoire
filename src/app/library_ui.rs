@@ -1,5 +1,5 @@
-//! The media player's screens: the library window (sign-in, folder choice, then the
-//! browser) and the now-playing bar. Shown only in media player mode, with the HUD.
+//! The media player's screens: the library window (folder choice, then the browser)
+//! and the now-playing bar. Shown only in media player mode, with the HUD.
 
 use super::hud::{label, mono, pill, DIM, INK, LINE, PANEL};
 use super::library::Library;
@@ -50,9 +50,7 @@ pub fn show(ctx: &egui::Context, app: &mut PolymoireApp) {
                 ui.set_width(width);
                 ui.set_height(height);
                 let lib = &mut app.library;
-                if lib.dbx.is_none() {
-                    setup(ui, lib);
-                } else if lib.browse.is_some() {
+                if lib.folder.is_none() || lib.browse.is_some() {
                     folder_picker(ui, lib);
                 } else {
                     browser(ui, lib, height);
@@ -71,75 +69,47 @@ fn status_line(ui: &mut egui::Ui, lib: &Library) {
     }
 }
 
-/// Step-by-step Dropbox app setup on the website.
-const DROPBOX_HELP: &str = "https://jakevose.github.io/polymoire/#dropbox";
-
-fn setup(ui: &mut egui::Ui, lib: &mut Library) {
-    heading(ui, "MEDIA PLAYER");
-    ui.add_space(6.0);
-    ui.add(
-        egui::Label::new(label(
-            "Plays mp3 and m4a files from a Dropbox folder. Polymoire reads your music and \
-             only ever writes one file: a backup of its catalog, in the folder you choose.",
-        ))
-        .wrap(),
-    );
-    ui.add_space(10.0);
-    if lib.settings.app_key().is_none() {
+fn folder_picker(ui: &mut egui::Ui, lib: &mut Library) {
+    heading(ui, "CHOOSE YOUR MUSIC FOLDER");
+    if lib.folder.is_none() {
+        ui.add_space(4.0);
         ui.add(
-            egui::Label::new(dim(
-                "Paste your Dropbox app key. It's a one-time, five-minute setup in Dropbox. \
-                 Use the App key, not the App secret: Polymoire never needs the secret.",
+            egui::Label::new(label(
+                "Plays mp3 and m4a files from a folder on this computer (or a drive or \
+                 network share it can see). Polymoire reads your music and only ever writes \
+                 one file: a backup of its catalog, in the folder you choose.",
             ))
             .wrap(),
         );
-        ui.hyperlink_to(dim("How to get an app key"), DROPBOX_HELP);
-        ui.text_edit_singleline(&mut lib.key_input);
         ui.add_space(6.0);
     }
-    if lib.auth.is_none() {
-        if pill(ui, "Connect Dropbox", true).clicked() {
-            lib.begin_auth();
-        }
-    } else {
-        ui.label(dim(
-            "1. Approve Polymoire in the browser window that opened.",
-        ));
-        if let Some(url) = lib.auth_url() {
-            ui.hyperlink_to(dim("Didn't open? Open the link."), url);
-        }
-        ui.label(dim("2. Paste the code Dropbox shows you:"));
-        let r = ui.text_edit_singleline(&mut lib.code_input);
-        let enter = r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
-        ui.horizontal(|ui| {
-            if pill(ui, "Finish", true).clicked() || enter {
-                lib.finish_auth();
-            }
-            if pill(ui, "Cancel", false).clicked() {
-                lib.auth = None;
-            }
-        });
-    }
-    ui.add_space(6.0);
-    status_line(ui, lib);
-}
-
-fn folder_picker(ui: &mut egui::Ui, lib: &mut Library) {
-    heading(ui, "CHOOSE YOUR MUSIC FOLDER");
     let path = lib
         .browse
         .as_ref()
         .map(|b| b.path.clone())
         .unwrap_or_default();
+    let parent = std::path::Path::new(&path)
+        .parent()
+        .map(polymoire::library::folder::display);
     ui.horizontal(|ui| {
-        if !path.is_empty() && pill(ui, "Up", false).clicked() {
-            let parent = path.rsplit_once('/').map_or("", |(p, _)| p).to_string();
-            lib.browse_to(&parent);
+        if let Some(up) = parent.filter(|p| !p.is_empty()) {
+            if pill(ui, "Up", false).clicked() {
+                lib.browse_to(&up);
+            }
         }
-        let shown = if path.is_empty() { "Dropbox" } else { &path };
-        ui.add(egui::Label::new(label(shown)).truncate());
+        if let Some(b) = lib.browse.as_mut() {
+            let r = ui.add(
+                egui::TextEdit::singleline(&mut b.typed)
+                    .hint_text("Type or paste a folder path")
+                    .desired_width(ui.available_width() - 50.0),
+            );
+            let enter = r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+            if pill(ui, "Go", false).clicked() || enter {
+                lib.browse_typed();
+            }
+        }
     });
-    // Only a folder Dropbox actually listed can become the library.
+    // Only a folder that could be listed can become the library.
     let listed = matches!(
         lib.browse.as_ref().and_then(|b| b.folders.as_ref()),
         Some(Ok(_))
@@ -151,10 +121,11 @@ fn folder_picker(ui: &mut egui::Ui, lib: &mut Library) {
         if r.clicked() {
             lib.choose_root(&path);
         }
-        if lib.settings.root.is_some() && pill(ui, "Cancel", false).clicked() {
+        if lib.folder.is_some() && pill(ui, "Cancel", false).clicked() {
             lib.browse = None;
         }
     });
+    status_line(ui, lib);
     ui.add_space(4.0);
     let mut go = None;
     egui::ScrollArea::vertical()
@@ -191,21 +162,13 @@ fn folder_picker(ui: &mut egui::Ui, lib: &mut Library) {
 fn browser(ui: &mut egui::Ui, lib: &mut Library, height: f32) {
     ui.horizontal(|ui| {
         heading(ui, "LIBRARY");
-        let root = lib.settings.root.clone().unwrap_or_default();
-        let who = lib.account.clone().unwrap_or_default();
-        ui.label(dim(format!(
-            "{who} · {}",
-            if root.is_empty() { "/" } else { &root }
-        )));
+        let root = lib.settings.folder.clone().unwrap_or_default();
+        ui.add(egui::Label::new(dim(&root)).truncate());
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            if pill(ui, "Disconnect", false).clicked() {
-                lib.disconnect();
-            }
             if pill(ui, "Folder", false).clicked() {
-                let at = lib.settings.root.clone().unwrap_or_default();
-                lib.browse_to(&at);
+                lib.browse_to(&root);
             }
-            if pill(ui, if lib.syncing { "Syncing…" } else { "Sync" }, false).clicked() {
+            if pill(ui, if lib.syncing { "Scanning…" } else { "Rescan" }, false).clicked() {
                 lib.sync();
             }
         });
@@ -234,7 +197,7 @@ fn browser(ui: &mut egui::Ui, lib: &mut Library, height: f32) {
     });
     status_line(ui, lib);
     if let Some(p) = &lib.scan {
-        // Indeterminate (animated) until the folder count is known.
+        // Animated until enough folders are read for a rough share.
         let bar = egui::ProgressBar::new(p.fraction().unwrap_or(0.0))
             .desired_height(4.0)
             .animate(p.fraction().is_none());
