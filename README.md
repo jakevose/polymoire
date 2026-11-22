@@ -97,11 +97,6 @@ How it behaves:
   maps, play counts, playlists), updated at most every 10 minutes and when you quit.
   Another computer that sees the same folder (a shared drive, or one a cloud app syncs)
   picks up from that backup.
-- **Used the Dropbox sign-in (0.2.x)?** It's gone: Dropbox's rate limits made big
-  libraries impractical. Install the Dropbox desktop app and choose your music folder
-  inside the Dropbox folder on your computer. The old sign-in is still in your system
-  keychain under "Polymoire"; you can delete it there, and revoke the app at
-  dropbox.com/account/connected_apps.
 
 ### Comfort: kinetic without motion sickness or flashing
 

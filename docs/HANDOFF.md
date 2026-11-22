@@ -36,7 +36,7 @@ Last updated: 2026-11-22 (v0.3.0: local folder, map wait, problem files).
   share, or a folder a cloud app syncs, which is how Dropbox users carry on). Scanning,
   tags, beat maps, loudness, catalog, views, playlists and the backup file all work as
   before. The app has **no network code at all** now (ureq, keyring, sha2, getrandom
-  removed), and the site says so (its copy says "Version 0.3 dropped it").
+  removed), and the site says so.
 - **Trait changes** now go through a shuffle bag (every trait changes once per round,
   never twice in a row). The user asked about "effects"; this assumes they meant the
   trait rows, not the options within the Effect trait. Not confirmed.
@@ -80,9 +80,10 @@ Last updated: 2026-11-22 (v0.3.0: local folder, map wait, problem files).
 - **Hero:** exactly four feature boxes in a fixed grid (4 across, 2×2 under 980 px, 1
   column on phones). Five boxes in an auto-fit grid wrapped 3 + 2 and looked awkward
   (user). Keep it at four, or change the grid with it.
-- **`#player`:** what the media player does, the one write, and a note for Dropbox
-  sign-in users. v0.2.x apps link to `#dropbox`, so that id stays (on the note's
-  heading).
+- **`#player`:** what the media player does and the one write. No Dropbox migration
+  note: the user was the only person who ever set up the Dropbox sign-in, so the site
+  and README dropped those steps (2026-11-22). v0.2.x's link to `#dropbox` now just
+  lands on the page.
 
 - https://jakevose.github.io/polymoire/ is built by `scripts/build-site.py` (standard
   library only) and deployed by `.github/workflows/pages.yml`: on pushes to `main`, after
@@ -428,8 +429,9 @@ the demo (40 min, 3 seeds):
   measured on screen.
 - The "Mapping beats" progress bar and the Problem files view haven't been seen on
   screen yet. Ask how the wait before an unmapped track feels.
-- Users of v0.2.x keep a Dropbox refresh token in their keychain ("Polymoire" /
-  `dropbox-refresh-token`); the app can no longer delete it. The README says how.
+- The user's own keychain still has the v0.2.x Dropbox token ("Polymoire" /
+  `dropbox-refresh-token`); they can delete it and revoke the app at
+  dropbox.com/account/connected_apps. Nobody else ever had one.
 - The player was checked offline (decode, resample, seek) but not through a sound card.
 - Ask the user: are the browse views right (Artists, Albums, Genres, Years by decade,
   Tempo bands, Folders, Playlists, Recently added, Most played, Songs)? Album art, an
@@ -567,3 +569,5 @@ the demo (40 min, 3 seeds):
     files are a malware risk: not realistically (pure-Rust decoder, no `unsafe`; fuzz
     found no crashes); robustness was the real gap.
   - The user tried the map wait on their library: "felt great". Released v0.3.0.
+  - The user was the only person who ever wired up Dropbox: removed the Dropbox note
+    from the site and README. Site-only change; the app didn't need a release.
