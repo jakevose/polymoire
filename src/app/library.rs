@@ -5,6 +5,7 @@
 use super::player::{Fetched, Player};
 use polymoire::library::catalog::{Catalog, Group, Tags, View, VERSION};
 use polymoire::library::folder::{self, Folder};
+use polymoire::library::journal::Journal;
 use polymoire::library::media;
 use polymoire::library::scan::{self, Progress, Step};
 use polymoire::library::store::{self, Settings};
@@ -32,8 +33,17 @@ enum Event {
     /// A sync run's findings, tagged with the run so a cancelled one is ignored.
     Scan(u64, Step),
     Synced(u64, Result<(), String>),
-    Tagged(String, Result<(Tags, f32), String>),
+    Tagged(String, TagRead),
     BackedUp(Result<(), String>),
+}
+
+/// How reading a file's tags went.
+enum TagRead {
+    Read(Tags, f32),
+    /// The file couldn't be read (a drive unplugged): try again another time.
+    Io(String),
+    /// The decoder failed or crashed on the whole file: a problem file.
+    Bad(String),
 }
 
 type GroupsKey = (u64, View, String);
@@ -80,6 +90,9 @@ pub struct Library {
     /// Tag reads in flight.
     tagging: usize,
     tried: HashSet<String>,
+    /// A file with a strike is being read on its own, so a second crash pins it.
+    solo: bool,
+    journal: Arc<Journal>,
     changed_at: Option<Instant>,
     backup_due: bool,
     last_backup: Instant,
@@ -107,10 +120,11 @@ impl Library {
             settings.volume = 0.8;
         }
         let (tx, rx) = channel();
+        let (journal, left) = Journal::open();
         let mut lib = Library {
             catalog: Catalog::default(),
             folder: None,
-            player: Player::new(settings.volume, settings.shuffle),
+            player: Player::new(settings.volume, settings.shuffle, journal.clone()),
             status: String::new(),
             browse: None,
             ui: UiState {
@@ -132,6 +146,8 @@ impl Library {
             restore_tried: false,
             tagging: 0,
             tried: HashSet::new(),
+            solo: false,
+            journal,
             changed_at: None,
             backup_due: false,
             last_backup: Instant::now(),
@@ -148,6 +164,7 @@ impl Library {
                     Catalog::new(&root)
                 };
                 lib.catalog.refresh_guesses();
+                lib.after_crash(&left);
                 lib.folder = Some(Arc::new(Folder::new(&root)));
                 lib.sync();
             }
@@ -157,6 +174,22 @@ impl Library {
             }
         }
         lib
+    }
+
+    /// The last run stopped while reading `left`: give each a strike, and save at once
+    /// so a crash right after launch still counts.
+    fn after_crash(&mut self, left: &[String]) {
+        if left.is_empty() {
+            return;
+        }
+        let bad = self.catalog.strike(left);
+        if !bad.is_empty() {
+            self.status = format!(
+                "{} file(s) crashed Polymoire twice and are now under Problem files",
+                bad.len()
+            );
+        }
+        let _ = store::save(store::CATALOG, &self.catalog);
     }
 
     pub fn save_settings(&mut self) {
@@ -269,37 +302,39 @@ impl Library {
     }
 
     /// Start reading the next untagged file's tags, a few at a time (each reads only the
-    /// start of the file). One start per frame.
+    /// start of the file). One start per frame. Files with a strike go first, alone.
     fn crawl(&mut self) {
         let Some(dir) = self.folder.clone() else {
             return;
         };
-        if self.tagging >= TAG_READS || self.syncing {
+        if self.tagging >= TAG_READS || self.syncing || self.solo {
             return;
         }
-        let Some(t) = self
-            .catalog
-            .untagged()
-            .find(|t| !self.tried.contains(&t.id))
-        else {
-            return;
+        let next = |struck: bool| {
+            self.catalog
+                .untagged()
+                .find(|t| (t.strikes > 0) == struck && !self.tried.contains(&t.id))
+        };
+        let t = match next(true) {
+            Some(_) if self.tagging > 0 => return,
+            Some(t) => {
+                self.solo = true;
+                t
+            }
+            None => match next(false) {
+                Some(t) => t,
+                None => return,
+            },
         };
         self.tried.insert(t.id.clone());
         self.tagging += 1;
         let (id, ext) = (t.id.clone(), t.ext().to_lowercase());
+        let journal = self.journal.clone();
         spawn(&self.tx, move || {
-            let res = dir.read(&id, Some(TAG_BYTES)).and_then(|mut b| {
-                // An ID3v2 block bigger than the first read (cover art): read all of it.
-                if let Some(n) = id3_size(&b).filter(|&n| n > b.len() as u64 && n <= MAX_TAG_BYTES)
-                {
-                    b = dir.read(&id, Some(n + 4096))?;
-                }
-                media::read_tags(Arc::new(b), &ext)
-            });
-            // Some files can't be read from their start alone (m4a with the index at the
-            // end; some mp3s Symphonia won't probe from a partial read). Locally, reading
-            // the whole file is cheap enough for the few that need it.
-            let res = res.or_else(|_| media::read_tags(Arc::new(dir.read(&id, None)?), &ext));
+            let res = {
+                let _reading = journal.reading(&id);
+                read_tags(&dir, &id, &ext)
+            };
             Event::Tagged(id, res)
         });
     }
@@ -313,6 +348,7 @@ impl Library {
         for f in fetched {
             match f {
                 Fetched::Analysis(id, a, tags) => {
+                    self.catalog.cleared(&id);
                     if let Some(map) = &a.map {
                         self.catalog.set_beats(&id, map);
                     }
@@ -327,6 +363,10 @@ impl Library {
                     self.changed();
                 }
                 Fetched::Failed(_, e) => self.status = e,
+                Fetched::Problem(id, why) => {
+                    self.catalog.set_problem(&id, &why);
+                    self.changed();
+                }
                 Fetched::Bytes(..) => {}
             }
         }
@@ -365,6 +405,7 @@ impl Library {
 
     /// Save everything on the way out.
     pub fn shutdown(&mut self) {
+        self.journal.close();
         self.save_settings();
         let _ = store::save(store::CATALOG, &self.catalog);
         if self.backup_due {
@@ -414,9 +455,19 @@ impl Library {
             Event::Restored(..) | Event::Scan(..) | Event::Synced(..) => {}
             Event::Tagged(id, res) => {
                 self.tagging -= 1;
-                if let Ok((tags, secs)) = res {
-                    self.catalog.set_tags(&id, tags, secs);
-                    self.changed();
+                self.solo = false;
+                match res {
+                    TagRead::Read(tags, secs) => {
+                        self.catalog.set_tags(&id, tags, secs);
+                        self.catalog.cleared(&id);
+                        self.changed();
+                    }
+                    TagRead::Bad(why) => {
+                        self.catalog.set_problem(&id, &why);
+                        self.changed();
+                    }
+                    // Not the file's fault (a drive unplugged): it's tried again next launch.
+                    TagRead::Io(e) => self.status = e,
                 }
             }
             Event::BackedUp(Err(e)) => self.status = format!("Backup failed: {e}"),
@@ -432,9 +483,58 @@ impl Library {
             .count()
     }
 
+    /// Play `ids` from `start`, leaving out problem files.
     pub fn play(&mut self, ids: Vec<String>, start: usize) {
-        if let Some(f) = self.folder.clone() {
+        let Some(f) = self.folder.clone() else {
+            return;
+        };
+        let ok = |id: &String| {
+            self.catalog
+                .tracks
+                .get(id)
+                .is_some_and(|t| t.problem.is_none())
+        };
+        let start = ids[..start.min(ids.len())].iter().filter(|i| ok(i)).count();
+        let ids: Vec<String> = ids.iter().filter(|i| ok(i)).cloned().collect();
+        if !ids.is_empty() {
             self.player.play_list(ids, start, &self.catalog, &f);
+        }
+    }
+
+    /// Problem files: let the app try this one again.
+    pub fn retry(&mut self, id: &str) {
+        self.catalog.retry(id);
+        self.tried.remove(id);
+        self.changed();
+    }
+
+    /// Problem files: stop listing this one.
+    pub fn hide_problem(&mut self, id: &str) {
+        if let Some(t) = self.catalog.tracks.get_mut(id) {
+            t.problem_hidden = true;
+        }
+        self.changed();
+    }
+
+    /// Show a file in Finder, Explorer or the file manager.
+    pub fn reveal(&self, id: &str) {
+        let Some(f) = &self.folder else { return };
+        let path = f.file(id);
+        let mut cmd = if cfg!(target_os = "macos") {
+            let mut c = std::process::Command::new("open");
+            c.arg("-R").arg(&path);
+            c
+        } else if cfg!(windows) {
+            let mut c = std::process::Command::new("explorer");
+            c.arg(format!("/select,{}", path.display()));
+            c
+        } else {
+            let mut c = std::process::Command::new("xdg-open");
+            c.arg(path.parent().unwrap_or(&path));
+            c
+        };
+        if let Err(e) = cmd.spawn() {
+            eprintln!("couldn't open the file manager: {e}");
         }
     }
 
@@ -478,6 +578,35 @@ impl Library {
     pub fn edit_playlists(&mut self, f: impl FnOnce(&mut Catalog)) {
         f(&mut self.catalog);
         self.changed();
+    }
+}
+
+/// Read a file's tags from its start, or from the whole file if the start alone won't
+/// parse (m4a with the index at the end; some mp3s Symphonia won't probe from a partial
+/// read). Locally, reading the whole file is cheap enough for the few that need it.
+fn read_tags(dir: &Folder, id: &str, ext: &str) -> TagRead {
+    let read = |first| dir.read(id, first);
+    let tags = |b: Vec<u8>| media::guarded(|| media::read_tags(Arc::new(b), ext));
+    let mut b = match read(Some(TAG_BYTES)) {
+        Ok(b) => b,
+        Err(e) => return TagRead::Io(e),
+    };
+    // An ID3v2 block bigger than the first read (cover art): read all of it.
+    if let Some(n) = id3_size(&b).filter(|&n| n > b.len() as u64 && n <= MAX_TAG_BYTES) {
+        match read(Some(n + 4096)) {
+            Ok(more) => b = more,
+            Err(e) => return TagRead::Io(e),
+        }
+    }
+    if let Ok((t, secs)) = tags(b) {
+        return TagRead::Read(t, secs);
+    }
+    match read(None) {
+        Err(e) => TagRead::Io(e),
+        Ok(whole) => match tags(whole) {
+            Ok((t, secs)) => TagRead::Read(t, secs),
+            Err(e) => TagRead::Bad(e),
+        },
     }
 }
 

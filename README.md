@@ -65,8 +65,9 @@ How it behaves:
   playing), Polymoire reads it and maps every beat in the whole track, so the
   visuals land on the beat from the first bar, through breakdowns, syncopation and
   tempo changes. The map is saved (about a byte per beat), so each track is analyzed
-  once. Until it's ready, the live beat tracker
-  fills in.
+  once. A track that hasn't been mapped yet waits for its map, with a progress bar:
+  about a third of a second for a song on a recent computer. Long mixes start after
+  two seconds with live beat tracking and switch to the map when it's done.
 - **The look follows the song.** The map also finds where bars start and where the song
   changes section (intro, drop, breakdown). A new section brings a new scene (pattern,
   colors, symmetry): quickly into a drop, slowly into a breakdown. In between, one
@@ -85,6 +86,12 @@ How it behaves:
   count. If part of the folder can't be read (an unplugged drive), nothing is removed.
   Tags are read in the background from the start of each file, and everything is
   cached on your computer.
+- **A broken file can't crash it.** If a file won't decode, or makes the decoder
+  crash, Polymoire skips it and lists it under **Problem files** (right-click: show
+  it in Finder, try again, or hide it). It never deletes anything. If the app ever
+  quits unexpectedly twice while reading the same file, that file goes on the list
+  too. Your music files can't run code in Polymoire: its decoder is written in safe
+  Rust.
 - **One write, ever.** Polymoire only reads your music. The one file it writes is
   `polymoire-library.json` in your music folder, a backup of its catalog (tags, beat
   maps, play counts, playlists), updated at most every 10 minutes and when you quit.

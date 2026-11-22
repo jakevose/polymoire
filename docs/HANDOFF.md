@@ -300,6 +300,24 @@ it to the shader. The flow clock `flow_t` advances by the Tempo trait plus
   - *Moves:* at the end of a scan, a vanished track and a new one with the same size
     and mtime (unique on both sides) are one file moved: it keeps tags, beat map, plays
     and playlist places. Replaces Dropbox's stable file ids.
+  - *Problem files (2026-11-22):* release builds now **unwind** on panic (was abort)
+    so `media::guarded` can catch a Symphonia panic around tag reads, analysis and
+    opening; the audio callback catches one around `Deck::fill`. A decode failure on
+    the whole file or a caught crash sets `Track.problem`: out of every view but
+    Problem files (shown only when non-empty), never read again until the file
+    changes or "Try again". Hard crashes (OOM, abort): `journal.rs` keeps the files
+    being decoded in `reading.json` in app data; a launch after an unclean exit gives
+    each a strike, two strikes make a problem, and struck files are re-read alone so
+    the second strike lands on the right one. Never deletes (one-write promise).
+    Fuzzing 600 corrupted mp3/m4a copies: 0 Symphonia panics (it has no `unsafe` in
+    the crates used), so this is insurance, not a known hole. Hangs aren't caught.
+  - *Waiting for the map:* a track with no map holds (picture still, as between
+    tracks) until mapped or `MAP_WAIT` (2 s) after play was asked; the now-playing bar
+    shows progress guessed from file size × `secs_per_mb` (starts at 0.1, a running
+    average of this machine's read+map time for files over 1 MB). Measured on the
+    user's drive (M3 Max): ~87 ms per track-minute, 0.3 s per song, 7 s per 85 min mix.
+    The user turned down mapping the whole library in the background: too much
+    thumb-drive churn.
   - *Folder picker:* in-app (no native dialog crate), starts at home, with a path box
     (`~` expands). macOS Info.plist carries usage strings for Documents, Desktop,
     Downloads, removable and network volumes.
@@ -334,6 +352,7 @@ it to the shader. The flow clock `flow_t` advances by the Tempo trait plus
 | `TEMPO_WINDOW` (8 s), `TEMPO_STEP` (1 s), `TEMPO_CHANGE` (40), `GLOBAL_PULL` (0.3) | beatmap.rs | Tempo curve: resolution, how readily it changes, how firmly breakdowns hold |
 | `TAG_BYTES` (256 KB), `BACKUP_EVERY` (10 min) | app/library.rs | Tag crawl read size; how often the backup is written |
 | `TARGET_LUFS` (−14) | app/player.rs | Playback loudness every track is leveled to |
+| `MAP_WAIT` (2 s), `SECS_PER_MB` (0.1) | app/player.rs | Longest wait for a new track's beat map; first guess for its progress bar |
 | `PHRASE_BARS` (4), `QUIET_PHRASE_BARS` (8), `QUIET_SECTION_DB` (3), `SCENE_BARS` (16), `SECTION_JUMP_DB` (3) | director.rs | Mapped pacing: bars between details, when a section counts as quiet, scene refresh in long sections, what counts as a drop or breakdown |
 | `PEAK_OVER_TYPICAL` (1.6), `MIN_CHANGE` (0.25), `MIN_SECTION` (16 beats) | structure.rs | How readily a section boundary is found |
 | `BIG_GAP` (16 s), beats per live shift (8 or 16) | director.rs | Live pacing |
@@ -404,6 +423,8 @@ the demo (40 min, 3 seeds):
 - **Local media player:** it has run on the user's 16k-track thumb drive (scan, tags,
   playback, backup). Ask how the picker, scan speed and Rescan felt; nothing has been
   measured on screen.
+- The "Mapping beats" progress bar and the Problem files view haven't been seen on
+  screen yet. Ask how the wait before an unmapped track feels.
 - Users of v0.2.x keep a Dropbox refresh token in their keychain ("Polymoire" /
   `dropbox-refresh-token`); the app can no longer delete it. The README says how.
 - The player was checked offline (decode, resample, seek) but not through a sound card.
@@ -415,18 +436,6 @@ the demo (40 min, 3 seeds):
 - A track is read fully into memory before it plays. Locally that's quick; on a slow
   network share a long mix may take a moment.
 - The player's output doesn't follow a change of default output device yet.
-- **A file that panics the decoder kills the app, maybe on every launch.** Release builds
-  use `panic = "abort"`, and the tag crawl starts on launch with its `tried` set only
-  in memory, so a crashing file would be retried (and crash) each launch. Symphonia
-  has no `unsafe` in the crates used, so a crafted file can't realistically run code;
-  the risk is crashes, huge allocations and hangs. Proposed (2026-11-22, not built):
-  catch panics around tag reads and analysis, a small "reading now" journal so a hard
-  crash marks the file bad on next launch, a problem-files list (hide / show in
-  Finder, never delete: the one-write promise).
-- Beat mapping speed (M3 Max, real files): ~87 ms per track-minute plus the read, so
-  0.3 s for a 3.5 min song, 7 s for an 85 min mix. Options discussed: wait for the map
-  before starting a track (with a cap), or map the whole library in the background
-  (16k tracks ≈ 1.5 core-hours), which doubles as the problem-file check.
 - Online metadata lookup (user asked 2026-11-12): not built. Read tags were clean
   (7 odd artists in 10,364, all real credits like "1991"; numeric titles real, e.g.
   Sakamoto's *12*); the weird names were path guesses, now fixed. If it's wanted for
@@ -548,3 +557,9 @@ the demo (40 min, 3 seeds):
   - First run on the user's thumb drive (`/Volumes/MPTHREE/Music`, 16,422 tracks, one
     exit, no errors): tags read for 16,416, the backup written (11.6 MB). The 6 left
     failed Symphonia's partial-read probe; the tag crawl now falls back to the whole file.
+  - User: mapping is fast enough to do before each track; no background mapping of
+    the whole library (thumb-drive churn). Built: wait for the map (2 s cap) with a
+    size-based progress bar, and problem files (panic guard, unwind builds, crash
+    journal with two strikes, Problem files view). The user asked whether media
+    files are a malware risk: not realistically (pure-Rust decoder, no `unsafe`; fuzz
+    found no crashes); robustness was the real gap.

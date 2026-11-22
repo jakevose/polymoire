@@ -211,7 +211,12 @@ fn browser(ui: &mut egui::Ui, lib: &mut Library, height: f32) {
     ui.horizontal_top(|ui| {
         ui.vertical(|ui| {
             ui.set_width(views_w);
+            let problems = lib.catalog.tracks.values().any(|t| t.problem.is_some());
             for v in View::ALL {
+                // Problem files is listed only when there are some.
+                if v == View::Problems && !problems {
+                    continue;
+                }
                 if ui
                     .selectable_label(lib.ui.view == v, label(v.label()))
                     .clicked()
@@ -338,7 +343,18 @@ enum TrackAction {
     NewWith(String),
     Move(usize, i32),
     Remove(usize),
+    Reveal(String),
+    Retry(String),
+    Hide(String),
 }
+
+const REVEAL: &str = if cfg!(target_os = "macos") {
+    "Show in Finder"
+} else if cfg!(windows) {
+    "Show in Explorer"
+} else {
+    "Open containing folder"
+};
 
 fn tracks(ui: &mut egui::Ui, lib: &mut Library, h: f32) {
     let view = lib.ui.view;
@@ -354,6 +370,7 @@ fn tracks(ui: &mut egui::Ui, lib: &mut Library, h: f32) {
         ui.label(dim(match view {
             View::MostPlayed => "Nothing played yet.",
             View::Playlists => "Empty. Right-click any track to add it here.",
+            View::Problems => "No problem files.",
             _ if lib.catalog.tracks.is_empty() && lib.syncing => {
                 "Reading the library folder. Tracks appear here as each folder is read."
             }
@@ -408,7 +425,10 @@ fn tracks(ui: &mut egui::Ui, lib: &mut Library, h: f32) {
                     mono(10.5),
                     INK,
                 );
-                let sub = format!("{} · {}", t.artist(), t.album());
+                let sub = match &t.problem {
+                    Some(why) => format!("{} · {why}", t.path),
+                    None => format!("{} · {}", t.artist(), t.album()),
+                };
                 p.text(
                     egui::pos2(x, rect.top() + 22.0),
                     Align2::LEFT_CENTER,
@@ -430,10 +450,24 @@ fn tracks(ui: &mut egui::Ui, lib: &mut Library, h: f32) {
                     mono(9.0),
                     DIM,
                 );
-                if r.double_clicked() {
+                if r.double_clicked() && view != View::Problems {
                     act = Some(TrackAction::Play(i));
                 }
                 let id = t.id.clone();
+                if view == View::Problems {
+                    r.context_menu(|ui| {
+                        if ui.button(REVEAL).clicked() {
+                            act = Some(TrackAction::Reveal(id.clone()));
+                        }
+                        if ui.button("Try again").clicked() {
+                            act = Some(TrackAction::Retry(id.clone()));
+                        }
+                        if ui.button("Hide from this list").clicked() {
+                            act = Some(TrackAction::Hide(id.clone()));
+                        }
+                    });
+                    continue;
+                }
                 r.context_menu(|ui| {
                     if ui.button("Play").clicked() {
                         act = Some(TrackAction::Play(i));
@@ -475,6 +509,9 @@ fn tracks(ui: &mut egui::Ui, lib: &mut Library, h: f32) {
         Some(TrackAction::Play(i)) => lib.play(ids.to_vec(), i),
         Some(TrackAction::Next(id)) => lib.player.play_next(id),
         Some(TrackAction::Queue(id)) => lib.player.enqueue(id),
+        Some(TrackAction::Reveal(id)) => lib.reveal(&id),
+        Some(TrackAction::Retry(id)) => lib.retry(&id),
+        Some(TrackAction::Hide(id)) => lib.hide_problem(&id),
         Some(TrackAction::AddTo(k, id)) => lib.edit_playlists(|c| c.playlists[k].tracks.push(id)),
         Some(TrackAction::NewWith(id)) => lib.edit_playlists(|c| {
             let k = c.new_playlist(&format!("Playlist {}", c.playlists.len() + 1));
@@ -536,6 +573,17 @@ fn now_playing(ui: &mut egui::Ui, lib: &mut Library) {
             }
         });
     });
+    // A new track's beat map being made: a bar guessed from the file size.
+    if let Some((f, playing)) = lib.player.mapping() {
+        ui.horizontal(|ui| {
+            ui.label(dim(if playing {
+                "Mapping beats · live tracking until it's done"
+            } else {
+                "Mapping beats"
+            }));
+            ui.add(egui::ProgressBar::new(f).desired_height(4.0));
+        });
+    }
     ui.horizontal(|ui| {
         let (pos, dur) = (lib.player.position(), lib.player.duration());
         ui.label(dim(clock(pos)));

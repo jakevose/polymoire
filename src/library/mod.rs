@@ -3,6 +3,7 @@
 
 pub mod catalog;
 pub mod folder;
+pub mod journal;
 pub mod media;
 pub mod names;
 pub mod scan;

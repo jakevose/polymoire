@@ -4,20 +4,30 @@
 //! What it plays is pushed into its own analyzer `Feed`, exactly like the demo beat, so
 //! the visuals react to the real output. Beats come from the track's beat map when it has
 //! one (`heard`, `map`), otherwise from the live analyzer.
+//!
+//! A track without a beat map waits for it (`MAP_WAIT` at most; mapping takes about
+//! 0.3 s for a song), with a progress bar guessed from the file size. Long mixes start
+//! after the wait with live beat tracking and switch to the map when it's done.
 
 use super::audio::{Feed, SharedFeed};
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use polymoire::beatmap::BeatMap;
 use polymoire::library::catalog::{Catalog, Tags, MAP_VERSION};
 use polymoire::library::folder::Folder;
+use polymoire::library::journal::Journal;
 use polymoire::library::media::{self, Decoder};
 use polymoire::rng::Rng;
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::sync::{Arc, Mutex};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 /// Tracks kept in memory: the current one, the next, and the last.
 const CACHE: usize = 3;
+/// Longest a new track waits for its beat map before it starts anyway.
+const MAP_WAIT: Duration = Duration::from_secs(2);
+/// First guess at reading plus mapping time per MB of file (an M3 Max maps 192 kbps
+/// mp3 at ~73 ms/MB). Replaced by what this computer actually takes as tracks are mapped.
+const SECS_PER_MB: f64 = 0.1;
 
 /// Recently read files (track id, bytes), oldest first.
 type Cache = Arc<Mutex<Vec<(String, Arc<Vec<u8>>)>>>;
@@ -27,7 +37,10 @@ pub enum Fetched {
     Bytes(String, Arc<Vec<u8>>),
     /// Beat map, duration and (from the whole file) tags.
     Analysis(String, media::Analysis, Option<Tags>),
+    /// The file couldn't be read (a drive unplugged).
     Failed(String, String),
+    /// The decoder failed or crashed on this file: a problem file.
+    Problem(String, String),
 }
 
 /// State shared with the audio callback.
@@ -48,6 +61,8 @@ struct Deck {
     seek: Option<f64>,
     /// (track time at the end of the last block, when it was handed over, output latency).
     anchor: Option<(f64, Instant, f64)>,
+    /// The decoder crashed while playing (caught on the audio thread).
+    crashed: bool,
 }
 
 impl Deck {
@@ -107,9 +122,18 @@ pub struct Player {
     pub feed: SharedFeed,
     stream: Option<cpal::Stream>,
     cache: Cache,
-    /// Reads and analyses under way (track ids).
+    /// Reads and analyses under way (track ids; analyses with when they started and the
+    /// file size in MB, for the progress guess).
     reading: Vec<String>,
-    analyzing: Vec<String>,
+    analyzing: Vec<(String, Instant, f64)>,
+    /// The current track, read but waiting for its beat map (since `asked`).
+    pending: Option<Arc<Vec<u8>>>,
+    asked: Instant,
+    /// The current track's leveling, measured by an analysis that just finished.
+    level: Option<f32>,
+    /// Seconds to read and map a MB on this computer (running average).
+    secs_per_mb: f64,
+    journal: Arc<Journal>,
     tx: Sender<Fetched>,
     rx: Receiver<Fetched>,
     pub queue: Vec<String>,
@@ -125,7 +149,7 @@ pub struct Player {
 }
 
 impl Player {
-    pub fn new(volume: f32, shuffle: bool) -> Self {
+    pub fn new(volume: f32, shuffle: bool, journal: Arc<Journal>) -> Self {
         let (tx, rx) = channel();
         Player {
             deck: Arc::new(Mutex::new(Deck {
@@ -141,12 +165,18 @@ impl Player {
                 gain_target: 1.0,
                 seek: None,
                 anchor: None,
+                crashed: false,
             })),
             feed: Arc::new(Mutex::new(None)),
             stream: None,
             cache: Arc::new(Mutex::new(Vec::new())),
             reading: Vec::new(),
             analyzing: Vec::new(),
+            pending: None,
+            asked: Instant::now(),
+            level: None,
+            secs_per_mb: SECS_PER_MB,
+            journal,
             tx,
             rx,
             queue: Vec::new(),
@@ -205,7 +235,18 @@ impl Player {
         }
     }
 
+    /// While the current track's beat map is being made: a guess at how far along it is
+    /// (from the file size), and whether the track is already playing without it.
+    pub fn mapping(&self) -> Option<(f32, bool)> {
+        let id = self.current.as_deref()?;
+        let (_, started, mb) = self.analyzing.iter().find(|(i, ..)| i == id)?;
+        let guess = (mb * self.secs_per_mb).max(0.05);
+        let f = (started.elapsed().as_secs_f64() / guess).min(0.97) as f32;
+        Some((f, self.pending.is_none()))
+    }
+
     pub fn stop(&mut self) {
+        self.pending = None;
         let mut d = self.deck();
         d.playing = false;
         d.dec = None;
@@ -274,13 +315,31 @@ impl Player {
             .and_then(|b| b.to_map());
         self.current = Some(id.clone());
         self.counted = false;
+        self.pending = None;
+        self.level = None;
+        self.asked = Instant::now();
+        // Fetch first, so a track that needs mapping is known to be waiting for it.
+        self.fetch(&id, cat, music);
         match self.cached(&id) {
-            Some(bytes) => self.open(&id, bytes, cat),
+            Some(bytes) => self.ready(&id, bytes, cat),
             None => self.status = "Loading…".into(),
         }
-        self.fetch(&id, cat, music);
         if let Some(next) = self.queue.get(self.index + 1).cloned() {
             self.fetch(&next, cat, music);
+        }
+    }
+
+    fn is_analyzing(&self, id: &str) -> bool {
+        self.analyzing.iter().any(|(i, ..)| i == id)
+    }
+
+    /// The current track's bytes are here: play now, or wait for its beat map.
+    fn ready(&mut self, id: &str, bytes: Arc<Vec<u8>>, cat: &Catalog) {
+        if self.map.is_none() && self.is_analyzing(id) && self.asked.elapsed() < MAP_WAIT {
+            self.pending = Some(bytes);
+            self.status = "Mapping beats…".into();
+        } else {
+            self.open(id, bytes, cat);
         }
     }
 
@@ -295,7 +354,7 @@ impl Player {
         let busy = |v: &Vec<String>| v.iter().any(|i| i == id);
         let stale = t.beats.as_ref().is_none_or(|b| b.v != MAP_VERSION);
         let needs_analysis =
-            (stale || t.duration <= 0.0 || t.loudness.is_none()) && !busy(&self.analyzing);
+            (stale || t.duration <= 0.0 || t.loudness.is_none()) && !self.is_analyzing(id);
         let hit = self.cached(id);
         if busy(&self.reading) || (hit.is_some() && !needs_analysis) {
             return;
@@ -304,14 +363,16 @@ impl Player {
             self.reading.push(id.to_string());
         }
         if needs_analysis {
-            self.analyzing.push(id.to_string());
+            let mb = t.size as f64 / 1e6;
+            self.analyzing.push((id.to_string(), Instant::now(), mb));
         }
-        let (id, ext, tx, music, cache) = (
+        let (id, ext, tx, music, cache, journal) = (
             id.to_string(),
             t.ext().to_lowercase(),
             self.tx.clone(),
             music.clone(),
             self.cache.clone(),
+            self.journal.clone(),
         );
         std::thread::spawn(move || {
             let bytes = match hit {
@@ -330,10 +391,15 @@ impl Player {
             };
             let _ = tx.send(Fetched::Bytes(id.clone(), bytes.clone()));
             if needs_analysis {
-                let tags = media::read_tags(bytes.clone(), &ext).ok().map(|(t, _)| t);
-                let msg = match media::analyze(bytes, &ext) {
-                    Ok(a) => Fetched::Analysis(id, a, tags),
-                    Err(e) => Fetched::Failed(id, e),
+                let msg = {
+                    let _reading = journal.reading(&id);
+                    let tags = media::guarded(|| media::read_tags(bytes.clone(), &ext))
+                        .ok()
+                        .map(|(t, _)| t);
+                    match media::guarded(|| media::analyze(bytes, &ext)) {
+                        Ok(a) => Fetched::Analysis(id, a, tags),
+                        Err(e) => Fetched::Problem(id, e),
+                    }
                 };
                 let _ = tx.send(msg);
             }
@@ -341,10 +407,11 @@ impl Player {
     }
 
     fn open(&mut self, id: &str, bytes: Arc<Vec<u8>>, cat: &Catalog) {
+        self.pending = None;
         let track = cat.tracks.get(id);
         let ext = track.map(|t| t.ext().to_lowercase()).unwrap_or_default();
-        let gain = track.map_or(1.0, leveling);
-        match Decoder::new(bytes, &ext) {
+        let gain = self.level.unwrap_or_else(|| track.map_or(1.0, leveling));
+        match media::guarded(|| Decoder::new(bytes, &ext)) {
             Ok(dec) => {
                 if let Err(e) = self.ensure_stream() {
                     self.status = e;
@@ -373,40 +440,74 @@ impl Player {
         music: Option<&Arc<Folder>>,
     ) -> (Vec<Fetched>, Option<String>) {
         let mut out = Vec::new();
+        let mut skip = false;
         while let Ok(msg) = self.rx.try_recv() {
             match &msg {
                 Fetched::Bytes(id, bytes) => {
                     self.reading.retain(|i| i != id);
-                    let opened = self.deck().dec.is_some();
+                    let opened = self.deck().dec.is_some() || self.pending.is_some();
                     if self.current.as_deref() == Some(id) && !opened {
-                        self.open(&id.clone(), bytes.clone(), cat);
+                        self.ready(&id.clone(), bytes.clone(), cat);
                     }
                     continue;
                 }
                 Fetched::Analysis(id, a, _) => {
-                    self.analyzing.retain(|i| i != id);
+                    if let Some((_, started, mb)) = self.analyzing.iter().find(|(i, ..)| i == id) {
+                        // Learn this computer's speed from files big enough to time.
+                        if *mb > 1.0 {
+                            let per = started.elapsed().as_secs_f64() / mb;
+                            self.secs_per_mb = 0.7 * self.secs_per_mb + 0.3 * per;
+                        }
+                    }
+                    self.analyzing.retain(|(i, ..)| i != id);
                     if self.current.as_deref() == Some(id) {
                         self.map = a.map.clone();
                         // Measured mid-play (a first play): glide to the level.
                         if let Some(l) = a.loudness {
-                            self.deck().gain_target = db_to_gain(l.gain_to(TARGET_LUFS));
+                            let g = db_to_gain(l.gain_to(TARGET_LUFS));
+                            self.level = Some(g);
+                            self.deck().gain_target = g;
                         }
                     }
                 }
                 Fetched::Failed(id, e) => {
                     self.reading.retain(|i| i != id);
-                    self.analyzing.retain(|i| i != id);
+                    self.analyzing.retain(|(i, ..)| i != id);
                     if self.current.as_deref() == Some(id) {
                         self.status = e.clone();
+                    }
+                }
+                Fetched::Problem(id, e) => {
+                    self.analyzing.retain(|(i, ..)| i != id);
+                    if self.current.as_deref() == Some(id) {
+                        self.pending = None;
+                        self.deck().dec = None;
+                        self.status = format!("Skipped a problem file: {e}");
+                        skip = true;
                     }
                 }
             }
             out.push(msg);
         }
+        // Waited long enough, or the map is in: play.
+        if let (Some(id), Some(bytes)) = (self.current.clone(), self.pending.clone()) {
+            if !self.is_analyzing(&id) || self.asked.elapsed() >= MAP_WAIT {
+                self.open(&id, bytes, cat);
+            }
+        }
+        if std::mem::take(&mut self.deck().crashed) {
+            if let Some(id) = self.current.clone() {
+                let why = "the decoder crashed while playing this file".to_string();
+                self.status = format!("Skipped a problem file: {why}");
+                out.push(Fetched::Problem(id, why));
+                skip = true;
+            }
+        }
         let ended = std::mem::take(&mut self.deck().ended);
-        if ended {
+        if ended || skip {
             match music {
                 Some(m) if self.index + 1 < self.queue.len() => self.skip(1, cat, m),
+                _ if skip => {}
                 _ => self.status = "End of the queue".into(),
             }
         }
@@ -440,7 +541,17 @@ impl Player {
                     move |data: &mut [$t], info: &cpal::OutputCallbackInfo| {
                         buf.resize(data.len(), 0.0);
                         let Ok(mut d) = deck.lock() else { return };
-                        d.fill(&mut buf, channels, sr, &mut mono);
+                        // A decoder crash mid-track: silence, and the track is skipped.
+                        let filled = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                            d.fill(&mut buf, channels, sr, &mut mono)
+                        }));
+                        if filled.is_err() {
+                            buf.fill(0.0);
+                            mono.clear();
+                            d.dec = None;
+                            d.playing = false;
+                            d.crashed = true;
+                        }
                         for (o, &v) in data.iter_mut().zip(&buf) {
                             *o = <$t as cpal::Sample>::from_sample::<f32>(v);
                         }

@@ -113,7 +113,19 @@ pub struct Track {
     pub seen: u32,
     /// Measured when the track was analyzed; levels its volume.
     pub loudness: Option<Loudness>,
+    /// Why this file can't be used (the decoder failed or crashed on it). Problem files
+    /// are left out of every view but Problem files, and never read again until the
+    /// file changes or the user asks to try again.
+    pub problem: Option<String>,
+    /// The user hid it from Problem files.
+    pub problem_hidden: bool,
+    /// Times the app stopped unexpectedly while reading this file (`journal`). Two make
+    /// it a problem; one could be a coincidence (a crash elsewhere, a power cut).
+    pub strikes: u8,
 }
+
+/// Strikes that make a file a problem.
+pub const STRIKES: u8 = 2;
 
 impl Track {
     pub fn ext(&self) -> &str {
@@ -204,10 +216,11 @@ pub enum View {
     Recent,
     MostPlayed,
     Songs,
+    Problems,
 }
 
 impl View {
-    pub const ALL: [View; 10] = [
+    pub const ALL: [View; 11] = [
         View::Artists,
         View::Albums,
         View::Genres,
@@ -218,6 +231,7 @@ impl View {
         View::Recent,
         View::MostPlayed,
         View::Songs,
+        View::Problems,
     ];
     pub fn label(self) -> &'static str {
         match self {
@@ -231,10 +245,14 @@ impl View {
             View::Recent => "Recently added",
             View::MostPlayed => "Most played",
             View::Songs => "Songs",
+            View::Problems => "Problem files",
         }
     }
     pub fn grouped(self) -> bool {
-        !matches!(self, View::Recent | View::MostPlayed | View::Songs)
+        !matches!(
+            self,
+            View::Recent | View::MostPlayed | View::Songs | View::Problems
+        )
     }
 }
 
@@ -292,6 +310,10 @@ impl Catalog {
             if t.hash != f.hash || t.path != f.path {
                 changed = true;
                 if t.hash != f.hash {
+                    // A new file: whatever was wrong with the old one may not be.
+                    t.problem = None;
+                    t.problem_hidden = false;
+                    t.strikes = 0;
                     t.tags = Tags::default();
                     t.tagged = false;
                     t.beats = None;
@@ -409,10 +431,55 @@ impl Catalog {
     /// tag reader.
     pub fn untagged(&self) -> impl Iterator<Item = &Track> {
         let stale = |t: &&Track| t.tagged && t.tags.v < TAGS_VERSION;
-        self.tracks
-            .values()
+        self.usable()
             .filter(|t| !t.tagged)
-            .chain(self.tracks.values().filter(stale))
+            .chain(self.usable().filter(stale))
+    }
+
+    /// Tracks that aren't problem files.
+    pub fn usable(&self) -> impl Iterator<Item = &Track> {
+        self.tracks.values().filter(|t| t.problem.is_none())
+    }
+
+    /// Mark a file as unusable, with the reason shown in Problem files.
+    pub fn set_problem(&mut self, id: &str, why: &str) {
+        if let Some(t) = self.tracks.get_mut(id) {
+            t.problem = Some(why.to_string());
+        }
+    }
+
+    /// The app stopped while reading these files. Returns the ones that are now
+    /// problems (their second strike).
+    pub fn strike(&mut self, ids: &[String]) -> Vec<String> {
+        let mut out = Vec::new();
+        for id in ids {
+            if let Some(t) = self.tracks.get_mut(id) {
+                t.strikes = t.strikes.saturating_add(1);
+                if t.strikes >= STRIKES && t.problem.is_none() {
+                    t.problem = Some(
+                        "Polymoire stopped unexpectedly while reading this file, twice".into(),
+                    );
+                    out.push(id.clone());
+                }
+            }
+        }
+        out
+    }
+
+    /// Read cleanly: forget earlier strikes.
+    pub fn cleared(&mut self, id: &str) {
+        if let Some(t) = self.tracks.get_mut(id) {
+            t.strikes = 0;
+        }
+    }
+
+    /// The user asked to try a problem file again.
+    pub fn retry(&mut self, id: &str) {
+        if let Some(t) = self.tracks.get_mut(id) {
+            t.problem = None;
+            t.problem_hidden = false;
+            t.strikes = 0;
+        }
     }
 
     /// Artist credits split using this library's artists.
@@ -482,7 +549,9 @@ impl Catalog {
                 let label = if rel.is_empty() { "(top)" } else { rel };
                 vec![(rel.to_lowercase(), label.to_string())]
             }
-            View::Playlists | View::Recent | View::MostPlayed | View::Songs => Vec::new(),
+            View::Playlists | View::Recent | View::MostPlayed | View::Songs | View::Problems => {
+                Vec::new()
+            }
         }
     }
 
@@ -505,7 +574,7 @@ impl Catalog {
         // Each group is labelled with its most common spelling.
         let credits = self.credits();
         let mut map: BTreeMap<String, (usize, BTreeMap<String, usize>)> = BTreeMap::new();
-        for t in self.tracks.values().filter(|t| t.matches(&q)) {
+        for t in self.usable().filter(|t| t.matches(&q)) {
             for (key, label) in self.group_keys(view, t, &credits) {
                 let g = map.entry(key).or_default();
                 g.0 += 1;
@@ -539,7 +608,11 @@ impl Catalog {
             return p
                 .tracks
                 .iter()
-                .filter(|id| self.tracks.get(*id).is_some_and(|t| t.matches(&q)))
+                .filter(|id| {
+                    self.tracks
+                        .get(*id)
+                        .is_some_and(|t| t.problem.is_none() && t.matches(&q))
+                })
                 .cloned()
                 .collect();
         }
@@ -547,6 +620,10 @@ impl Catalog {
         let mut v: Vec<&Track> = self
             .tracks
             .values()
+            .filter(|t| match view {
+                View::Problems => t.problem.is_some() && !t.problem_hidden,
+                _ => t.problem.is_none(),
+            })
             .filter(|t| t.matches(&q))
             .filter(|t| match group {
                 Some(g) => self
@@ -573,7 +650,7 @@ impl Catalog {
             View::Tempo => {
                 v.sort_by(|a, b| a.bpm().unwrap_or(0.0).total_cmp(&b.bpm().unwrap_or(0.0)))
             }
-            View::Folders => v.sort_by_key(|t| t.path.to_lowercase()),
+            View::Folders | View::Problems => v.sort_by_key(|t| t.path.to_lowercase()),
             View::Songs | View::Genres => v.sort_by_key(|t| t.title().to_lowercase()),
             _ => v.sort_by_key(album_order),
         }
@@ -993,6 +1070,34 @@ mod tests {
         assert_eq!(c.tracks["Best/01 Migration.mp3"].plays, 1);
         assert_eq!(c.playlists[0].tracks, ["Best/01 Migration.mp3", "b"]);
         assert_eq!(c.tracks["e"].plays, 0);
+    }
+
+    #[test]
+    fn problem_files_leave_the_library_until_the_file_changes() {
+        let mut c = sample();
+        c.set_problem("a", "the decoder crashed on this file");
+        assert!(!c
+            .list(View::Artists, Some("bonobo"), "")
+            .contains(&"a".into()));
+        assert!(c.untagged().all(|t| t.id != "a"));
+        assert_eq!(c.list(View::Problems, None, ""), ["a"]);
+        // One unexplained stop is a coincidence; a second makes it a problem.
+        assert!(c.strike(&["b".into()]).is_empty());
+        assert_eq!(c.strike(&["b".into()]), ["b"]);
+        c.cleared("c");
+        assert!(c.strike(&["c".into()]).is_empty());
+        // Hidden from Problem files, still out of the library.
+        c.tracks.get_mut("b").unwrap().problem_hidden = true;
+        assert_eq!(c.list(View::Problems, None, ""), ["a"]);
+        // A changed file gets another chance.
+        c.merge_listing(&[
+            listed("a", "/Music/Bonobo/Migration/01 Migration.mp3", "1-new"),
+            listed("b", "/Music/Bonobo/Migration/02 Break Apart.m4a", "2"),
+        ]);
+        assert!(c.tracks["a"].problem.is_none());
+        assert!(c.tracks["b"].problem.is_some());
+        c.retry("b");
+        assert_eq!(c.list(View::Artists, Some("bonobo"), ""), ["a", "b"]);
     }
 
     #[test]

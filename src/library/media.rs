@@ -14,6 +14,19 @@ use symphonia::core::units::Time;
 
 pub type Result<T> = std::result::Result<T, String>;
 
+/// Run decoder work, turning a crash (a panic in Symphonia on a malformed file) into an
+/// error, so one bad file can't take the app down.
+pub fn guarded<T>(f: impl FnOnce() -> Result<T>) -> Result<T> {
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(f)).unwrap_or_else(|p| {
+        let why = p
+            .downcast_ref::<&str>()
+            .map(|s| s.to_string())
+            .or_else(|| p.downcast_ref::<String>().cloned())
+            .unwrap_or_default();
+        Err(format!("the decoder crashed on this file ({})", why.trim()))
+    })
+}
+
 fn open(bytes: Arc<Vec<u8>>, ext: &str) -> Result<Box<dyn FormatReader>> {
     let mss = MediaSourceStream::new(
         Box::new(Cursor::new(ArcBytes(bytes))),
@@ -205,4 +218,26 @@ pub fn analyze(bytes: Arc<Vec<u8>>, ext: &str) -> Result<Analysis> {
         duration: frames as f32 / rate as f32,
         loudness: meter.finish(),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_decoder_crash_becomes_an_error() {
+        let r: Result<()> = guarded(|| panic!("index out of bounds"));
+        assert_eq!(
+            r.unwrap_err(),
+            "the decoder crashed on this file (index out of bounds)"
+        );
+        assert_eq!(guarded(|| Ok(3)), Ok(3));
+    }
+
+    #[test]
+    fn garbage_is_an_error_not_a_crash() {
+        let junk = Arc::new((0..64 * 1024).map(|i| (i * 7919 % 251) as u8).collect());
+        assert!(guarded(|| read_tags(Arc::clone(&junk), "mp3")).is_err());
+        assert!(guarded(|| analyze(junk, "m4a")).is_err());
+    }
 }
