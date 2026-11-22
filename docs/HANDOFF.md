@@ -4,7 +4,7 @@ What a new session needs to pick up the work: where things stand, why things are
 they are, and what is still open. The code and git history say *what*; this file says
 *why* and *what's next*. Keep it current (see `CLAUDE.md`).
 
-Last updated: 2026-11-21 (Dropbox dropped for a local folder; not released yet).
+Last updated: 2026-11-22 (v0.3.0: local folder, map wait, problem files).
 
 ## Where things stand
 
@@ -28,7 +28,7 @@ Last updated: 2026-11-21 (Dropbox dropped for a local folder; not released yet).
   5. On `media-player`, with whole-track beat maps: the look follows the song's
      sections and phrases, and reaction strength knows how loud the song gets (see
      Decisions). The user said "I like where we're at" and released it as v0.2.0.
-- **Media player: a local folder (since 2026-11-21, unreleased).** v0.2.0 shipped it
+- **Media player: a local folder (since 2026-11-21, released in v0.3.0).** v0.2.0 shipped it
   on Dropbox (the user's "counterintuitive direction": a player *inside* the
   visualizer, with a catalog, playlists and beat maps made ahead). The user then
   dropped Dropbox: **its rate limits made it impractical** for a big library. The
@@ -36,14 +36,17 @@ Last updated: 2026-11-21 (Dropbox dropped for a local folder; not released yet).
   share, or a folder a cloud app syncs, which is how Dropbox users carry on). Scanning,
   tags, beat maps, loudness, catalog, views, playlists and the backup file all work as
   before. The app has **no network code at all** now (ureq, keyring, sha2, getrandom
-  removed), and the site says so. Next release should be 0.3.0 (site copy says "Version
-  0.3 dropped it").
+  removed), and the site says so (its copy says "Version 0.3 dropped it").
 - **Trait changes** now go through a shuffle bag (every trait changes once per round,
   never twice in a row). The user asked about "effects"; this assumes they meant the
   trait rows, not the options within the Effect trait. Not confirmed.
 
 ## Releases
 
+- **v0.3.0 released 2026-11-22**: a local music folder instead of Dropbox (no network
+  code left), waiting up to 2 s for a new track's beat map with a progress bar, and
+  Problem files (decoder crashes caught, crash journal). The user tried it on their
+  16k-track thumb drive and said it "felt great".
 - **v0.2.1 released 2026-11-14**: Dropbox sign-in moved to the system keychain, a
   Dropbox setup guide on the site and in the README, a 4-box hero.
 - **v0.2.0 released 2026-11-14**: the media player (Dropbox library, whole-track beat
@@ -563,3 +566,4 @@ the demo (40 min, 3 seeds):
     journal with two strikes, Problem files view). The user asked whether media
     files are a malware risk: not realistically (pure-Rust decoder, no `unsafe`; fuzz
     found no crashes); robustness was the real gap.
+  - The user tried the map wait on their library: "felt great". Released v0.3.0.
